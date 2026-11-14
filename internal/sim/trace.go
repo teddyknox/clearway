@@ -5,9 +5,9 @@ import (
 	"math"
 	"strings"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/kernel"
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/kernel"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 // Recording is a replayable trace of one run, made for the viewer. It holds

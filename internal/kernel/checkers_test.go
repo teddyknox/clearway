@@ -5,8 +5,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 var testSep = SepParams{Sh: 5, SvTrue: 600}

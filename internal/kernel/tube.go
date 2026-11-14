@@ -11,7 +11,7 @@ package kernel
 import (
 	"math"
 
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 // FlightID names one flight.

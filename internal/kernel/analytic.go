@@ -4,7 +4,7 @@ import (
 	"math"
 	"sort"
 
-	"autoatc/internal/geom"
+	"github.com/teddyknox/clearway/internal/geom"
 )
 
 // AnalyticChecker is Verifier implementation A.

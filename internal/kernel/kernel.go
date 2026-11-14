@@ -4,8 +4,8 @@ import (
 	"math"
 	"sort"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 // Authority is the one actor that may issue clearances to a flight.

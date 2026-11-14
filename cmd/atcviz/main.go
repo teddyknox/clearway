@@ -1,4 +1,4 @@
-// Command atcviz serves a viewer for the AutoATC cell simulation.
+// Command atcviz serves a viewer for the Clearway cell simulation.
 //
 // It runs a scenario on request, records it, and sends the recording to a
 // page that replays it: aircraft, contracts, proposals and the kernel's
@@ -22,7 +22,7 @@ import (
 	"strings"
 	"sync"
 
-	"autoatc/internal/sim"
+	"github.com/teddyknox/clearway/internal/sim"
 )
 
 //go:embed web
@@ -131,6 +131,6 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "address to listen on")
 	webDir := flag.String("web", "", "serve the page from this directory in place of the built-in copy")
 	flag.Parse()
-	log.Printf("AutoATC viewer: http://%s", *addr)
+	log.Printf("Clearway viewer: http://%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, newMux(*webDir)))
 }

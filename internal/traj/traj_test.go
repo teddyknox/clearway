@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"autoatc/internal/geom"
+	"github.com/teddyknox/clearway/internal/geom"
 )
 
 func line(t0 float64) *Trajectory {

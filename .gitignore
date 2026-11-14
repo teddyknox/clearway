@@ -1,0 +1,5 @@
+# Binaries from `go build ./cmd/...` at the repository root.
+/atcsim
+/atcviz
+*.test
+*.out

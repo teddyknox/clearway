@@ -1,4 +1,4 @@
-// AutoATC cell viewer. Plain JavaScript, no dependencies.
+// Clearway cell viewer. Plain JavaScript, no dependencies.
 //
 // The server runs one scenario and returns a recording: a frame every five
 // seconds, the paths of all contracts, and a list of events. This file replays

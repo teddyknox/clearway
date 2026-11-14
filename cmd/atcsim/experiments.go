@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/sim"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/sim"
 )
 
 type row struct {

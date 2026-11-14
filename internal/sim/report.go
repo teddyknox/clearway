@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"autoatc/internal/kernel"
-	"autoatc/internal/planner"
+	"github.com/teddyknox/clearway/internal/kernel"
+	"github.com/teddyknox/clearway/internal/planner"
 )
 
 // Report is the result of one run.

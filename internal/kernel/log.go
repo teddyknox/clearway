@@ -6,7 +6,7 @@ import (
 	"math"
 	"sort"
 
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 // InputKind names one kind of kernel input.

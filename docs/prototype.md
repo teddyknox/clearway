@@ -42,6 +42,7 @@ These are results of a simplified model (section 9). They test the logic of the 
 |---|---|
 | Invariants I1 to I5 and assumptions A1 to A3 of the design | Surface, terminal airspace, runways, wake |
 | One cell with entry and exit contracts | Several cells, boundary agreements, island mode |
+| A deterministic kernel with an input log, replay, and a state digest | Replicas, quorum certificates, a hash-chained and signed record |
 | Level flight, climbs and descents, speed changes, lateral detours | Holding, weather, wind fields |
 | Data link delay, lost uplinks, lost replies, refusals, one repeat | Voice, speech recognition |
 | Aircraft that leave their route, leave their level, or have no radio | Surveillance faults, spoofing |
@@ -293,6 +294,8 @@ The design document is updated with these points.
 - **The planner is simple.** The density results describe this heuristic planner, not the limit of the design.
 - **Speed changes are not modelled exactly.** An aircraft that is early by some seconds is early by a different distance on a faster leg. The model covers this with margin and does not treat it exactly.
 - **Parameters are untuned.** Every value in section 4.2 is an initial value.
+
+[gap-analysis.md](gap-analysis.md) sets these limits beside what a system that carries traffic would need, and says what closes each gap.
 
 ## 10. Viewer
 

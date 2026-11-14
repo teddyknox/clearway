@@ -5,8 +5,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 const cruise = 480 * geom.Kt

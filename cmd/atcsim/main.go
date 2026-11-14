@@ -1,4 +1,4 @@
-// Command atcsim runs the fast-time simulation of one AutoATC cell.
+// Command atcsim runs the fast-time simulation of one Clearway cell.
 //
 //	atcsim                         one run with default settings
 //	atcsim -planner chaos -hours 12
@@ -12,8 +12,8 @@ import (
 	"os"
 	"time"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/sim"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/sim"
 )
 
 func main() {

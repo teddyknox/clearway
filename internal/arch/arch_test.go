@@ -43,9 +43,9 @@ func imports(t *testing.T, dir string) map[string]bool {
 // depend on the planner, the simulator, or the Safety Net, and it must not
 // use random numbers or the wall clock.
 func TestKernelDependencies(t *testing.T) {
-	allowed := map[string]bool{"autoatc/internal/geom": true, "autoatc/internal/traj": true}
+	allowed := map[string]bool{"github.com/teddyknox/clearway/internal/geom": true, "github.com/teddyknox/clearway/internal/traj": true}
 	for p := range imports(t, "../kernel") {
-		if strings.HasPrefix(p, "autoatc/") && !allowed[p] {
+		if strings.HasPrefix(p, "github.com/teddyknox/clearway/") && !allowed[p] {
 			t.Errorf("kernel imports %s", p)
 		}
 		if strings.HasPrefix(p, "math/rand") || p == "time" || p == "crypto/rand" {
@@ -57,7 +57,7 @@ func TestKernelDependencies(t *testing.T) {
 // The Tactical Safety Net shares no code with the rest of the system.
 func TestSafetyNetIsIndependent(t *testing.T) {
 	for p := range imports(t, "../safetynet") {
-		if strings.HasPrefix(p, "autoatc/") {
+		if strings.HasPrefix(p, "github.com/teddyknox/clearway/") {
 			t.Errorf("safety net imports %s", p)
 		}
 	}

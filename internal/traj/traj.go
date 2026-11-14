@@ -10,7 +10,7 @@ import (
 	"math"
 	"sort"
 
-	"autoatc/internal/geom"
+	"github.com/teddyknox/clearway/internal/geom"
 )
 
 const (

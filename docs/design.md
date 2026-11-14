@@ -1,11 +1,11 @@
-# AutoATC: a design for automated air traffic control in the United States
+# Clearway: a design for automated air traffic control in the United States
 
 | | |
 |---|---|
 | Status | Draft 0.1, 2026-11-14 |
 | Scope | Architecture, safety approach, migration path. No cost estimate. |
 | Standing | Independent design study. Not an FAA document. |
-| Prototype | [prototype.md](prototype.md): the kernel of section 6 for one en route cell, with simulation results. Changes that it forced are marked "(prototype)". |
+| Prototype | [prototype.md](prototype.md): the kernel of section 6 for one en route cell, with simulation results. Changes that it forced are marked "(prototype)". [gap-analysis.md](gap-analysis.md) lists what separates it from this design. |
 
 **Conventions.** A dagger (†) marks an initial design value. Simulation must confirm or replace it. Section 17 separates the sources checked for this draft from prior art cited from general knowledge.
 
@@ -13,19 +13,20 @@
 
 About 11,000 certified controllers separate aircraft in U.S. airspace. Each controller works one sector and issues clearances by voice. The automation under them is about 138 separately built systems, and the FAA rates 51 of those as unsustainable. Capacity and resilience therefore scale with certified headcount per sector, and the system has been short of that headcount for years.
 
-AutoATC is one software stack that takes over clearance authority in stages. Its safety does not depend on any learned model being correct. AI does most of the work: it plans, predicts, listens, and speaks. A small verified kernel holds the guarantee: it decides whether a clearance may be issued.
+Clearway is one software stack that takes over clearance authority in stages. Its safety does not depend on any learned model being correct. AI does most of the work: it plans, predicts, listens, and speaks. A small verified kernel holds the guarantee: it decides whether a clearance may be issued.
 
-The design rests on nine decisions.
+The design rests on ten decisions.
 
 1. **One contract per flight.** Each flight has one cleared 4D trajectory with stated tolerances. The set of all contracts is the single operational truth for surface, terminal, en route, and flow.
 2. **A verified kernel is the only path to a clearance.** No clearance reaches an aircraft unless a deterministic, formally specified Verifier has shown that the resulting set of contracts is separated.
 3. **AI proposes; the kernel disposes.** Learned models sit only where a wrong output costs efficiency. They are never on the approval path.
 4. **Safe by state.** If all decision software stops, aircraft continue on contracts that are already separated for a known time. Safety does not depend on the software staying alive from second to second.
-5. **One stack, many cells.** All airspace runs the same software and data model. Authority is held per cell, so a fault in one cell does not stop the country.
+5. **One stack, many cells.** All airspace runs the same software and data model. Authority is held per cell, so a fault in one cell does not stop the country. Inside a cell, no one machine, release, or signer can issue a clearance alone.
 6. **No new avionics for basic service.** The system speaks standard phraseology on existing VHF radios and understands readbacks. Data link gives better service where aircraft have it.
 7. **Humans decide what needs judgment. Automation does what needs speed.** A human is never the sub-minute fallback for failed automation.
 8. **Authority moves by evidence.** Each cell climbs five autonomy levels one at a time. Each step has pre-registered evidence gates and automatic demotion triggers.
 9. **The same platform first replaces ERAM and STARS as a manual system.** That is the FAA's planned Common Automation Platform (CAP). Automation is then a mode of that platform, not a second replacement program.
+10. **An open kernel and a checkable record.** The specification and the source of the kernel are public. Each cell keeps a tamper-evident record, and any party that holds it can replay the kernel and check every verdict.
 
 The design end state keeps certified controllers as supervisors of automated airspace. It does not aim at a system with no humans.
 
@@ -66,6 +67,7 @@ Four conclusions follow.
 | G5 | An aircraft with a VHF radio and ADS-B Out gets basic service. |
 | G6 | Every decision is recorded and reproducible from the record. |
 | G7 | The government owns the architecture, the interfaces, the data, and the safety case. |
+| G8 | The specification and the source of the kernel are public. A party outside the operator can check the record of what the kernel decided. |
 
 **Non-goals**
 
@@ -240,7 +242,7 @@ A widened envelope reduces capacity. It never reduces separation. This is the ge
 - *Requires.* The Store supplies the committed contracts. The Airspace Model supplies the separation standard, the envelope parameters, and the active constraints. Fusion supplies integrity bounds.
 - *Guarantees.* The Verifier commits an amendment only if I2, I3, and I4 hold after the commit. The check is conservative: the Verifier may reject a safe amendment, and it does not approve an unsafe one.
 - *Does not guarantee.* The Verifier does not choose trajectories, does not optimize, and does not judge fairness.
-- *Implementation.* Two teams build two implementations from one formal specification. A commit needs approval from both. The two should differ in kind: in the prototype one is exact and one is a conservative bound, and the second found two defects in the first.
+- *Implementation.* Two teams build two implementations from one formal specification. Each kernel replica runs both and votes to commit only if both approve (section 9.5). The two should differ in kind: in the prototype one is exact and one is a conservative bound, and the second found two defects in the first.
 - *Disagreement.* The specification states a tolerance in distance and in time. If one implementation approves and the other rejects, the approving one runs again with the standard tightened by the tolerance. If it then rejects, the disagreement is marginal: the Verifier rejects the amendment and raises no alarm. If it still approves, one implementation is wrong: the Verifier rejects the amendment and raises an alarm. (prototype)
 - *On failure.* If alarms persist, the cell enters hold state.
 
@@ -262,6 +264,7 @@ A widened envelope reduces capacity. It never reduces separation. This is the ge
 **Delivery Gateway (acknowledgement logic Tier A, speech models Tier B)**
 
 - *Role.* The Gateway delivers each clearance by data link, or by synthetic voice on the assigned frequency, and captures the acknowledgement.
+- *Requires.* Each clearance carries a quorum certificate: the signatures of the kernel replicas that committed it (section 9.5). The Gateway delivers no clearance without one.
 - *Guarantees.* The Gateway reports each clearance as acknowledged, refused, or failed. It reports *acknowledged* only when a data link reply matches the message, or when a readback matches the callsign and every safety-relevant element of the clearance. If no acknowledgement arrives within the timeout (10 s† voice, 60 s† data link), the Gateway repeats the clearance once, then reports *failed*.
 - *Voice output.* The Gateway composes speech from the structured clearance with the fixed phraseology grammar of FAA Order JO 7110.65. No generative model composes a clearance.
 - *Voice input.* A readback that the recognizer cannot match counts as no readback. The residual hazard is a false match. The Conformance Monitor is the barrier for it (A3).
@@ -303,7 +306,7 @@ A widened envelope reduces capacity. It never reduces separation. This is the ge
 **Recorder and Digital Twin (Tier C)**
 
 - *Role.* The Recorder stores every input, decision, clearance, acknowledgement, and audio channel. The Twin replays recorded days and simulates variants and faults.
-- *Guarantees.* Any decision can be reproduced from the record. Investigators get the complete record.
+- *Guarantees.* Any decision can be reproduced from the record. Investigators get the complete record. Each cell chains its input log by hash, and the replicas sign and publish checkpoints, so that a party outside the operator can detect a changed record and can replay it (section 9.5).
 
 **External gateways**
 
@@ -458,7 +461,7 @@ Towers come last. The early benefit lands in en route centers and large terminal
 - **Core sites.** Four to six† hardened sites under FAA control, far apart, each with diverse power and network paths. They host the kernels of all cells and the national services.
 - **Edge nodes.** One at each major terminal area and each concentration of radio and sensor sites. An edge node hosts the Gateway, a Safety Net instance, a non-voting replica of its cell's Store, and both Verifier implementations.
 - **Cells.** The first cell boundaries follow today's facility boundaries, because procedures, radio coverage, and letters of agreement already align with them. Boundaries are data in the Airspace Model. Later releases can merge or reshape cells.
-- **Replication.** The kernel of each cell runs at three core sites. A commit needs two of three.
+- **Replication.** The kernel of each cell runs at four core sites. A commit needs three of four. The cell then tolerates one replica that fails in any way, including one that gives wrong answers (section 9.5).
 
 The computing load is small. About 5,400 aircraft at peak, with position updates once per second, fits on a few servers. The FAA describes today's computing as spread over about 350 facilities. That spread reflects the networks of the time when the facilities were built. It does not reflect the size of the problem. The hard problems are assurance and integration.
 
@@ -466,17 +469,18 @@ Commodity hardware and cloud software practices fit all tiers. The Tier A path m
 
 ### 9.2 Authority follows the radio
 
-A clearance has effect only if a radio delivers it, and the radios connect through edge nodes. The edge Gateway delivers a clearance only from the holder of the cell's lease.
+A clearance has effect only if a radio delivers it, and the radios connect through edge nodes. The edge Gateway delivers a clearance only from the holder of the cell's lease, and only with a quorum certificate (section 9.5).
 
 - **Normal.** The core kernel holds the lease and renews it through the edge.
-- **Island mode.** If an edge node loses all core sites, the lease expires. The edge node then takes authority for its region with its local replica and Verifier. It commits no amendment that crosses its boundary. Boundary flows revert to static agreements in the Airspace Model: fixed routes, altitudes, and spacing.
+- **Island mode.** If an edge node loses all core sites, the lease expires. The edge node then takes authority for its region with its local replica and Verifier. It commits no amendment that crosses its boundary. Boundary flows revert to static agreements in the Airspace Model: fixed routes, altitudes, and spacing. In island mode the edge node decides alone, so the region gives up tolerance of a lying replica in exchange for continuity. The exchange is limited to that region and to the time of the partition.
 - **Rejoin.** When the core returns, the edge replica's log is merged under the same Verifier checks before the core takes the lease back.
 
 ### 9.3 Failure behavior
 
 | Failure | System behavior | Effect on traffic |
 |---|---|---|
-| One core site lost | The other two replicas continue. | None. |
+| One core site lost | The other three replicas continue. | None. |
+| One replica gives wrong answers | The other three outvote it. The Gateway accepts only a quorum certificate, so nothing that the bad replica signs alone reaches an aircraft. | None. |
 | A cell loses its quorum | Hold state. No new strategic clearance. Contracts continue. Edge nodes deliver holds, landings, and exits. The Flow Manager stops inflow. Supervisors take flights one by one. | Aircraft in the cell complete or hold. Departures into the cell stop. |
 | A region loses the core | Island mode (9.2). | Reduced rate across the boundary. |
 | Planner fails or overloads | Contracts stay valid. The Fallback Resolver handles conflicts. The cell publishes lower capacity. | Delay. |
@@ -512,6 +516,45 @@ The design applies six measures.
 5. **Dissimilar layers.** The Safety Net and the Backup Separation Display share no code with the kernel.
 6. **Resource budgets.** Every Tier A operation has a fixed memory and time bound. An operation that exceeds its bound fails alone.
 
+### 9.5 Single points of failure
+
+The aim: no one machine, no one software release, and no one person can cause a wrong clearance or stop a cell. Replication reaches part of that aim. This section states what it reaches and what it does not.
+
+**Two kinds of redundancy, two voting rules**
+
+| Redundancy | Protects against | Rule | Reason |
+|---|---|---|---|
+| Four replicas of the kernel, at four sites | A machine or a site that stops, or that gives wrong answers because it is faulty or compromised | A commit needs three of four replicas. | Replica faults are independent. A quorum outvotes one bad replica, and the cell keeps working. |
+| The Verifier implementations inside each replica | A defect in one implementation | A replica votes to commit only if every implementation approves. | Software faults are not independent. A majority of wrong implementations must not be able to approve an unsafe clearance. |
+
+The second rule costs liveness: one faulty implementation blocks every commit. The design accepts that cost. A blocked cell enters hold state, and its contracts stay safe for the coast time.
+
+**Quorum certificate.** A committed clearance carries the signatures of the replicas that committed it. The Gateway at the radio site checks them and delivers nothing without them. A compromised kernel host therefore cannot issue a clearance alone. Where the link standard allows it, the aircraft or its operator can check the same signatures.
+
+**A record that others can check.** The kernel is a deterministic state machine. One input log, replayed, gives one state and one sequence of verdicts.
+
+- Each cell chains its input log by hash.
+- At a fixed interval the replicas sign a checkpoint: the hash of the log and a digest of the state.
+- The checkpoints go to witnesses outside the program, for example the accident investigator and the safety oversight office, and are published.
+- A party that holds the log can confirm that it matches the checkpoints, replay the kernel, and check every verdict. The kernel source is public (section 13), so that party does not need the operator's help.
+
+The prototype has the replay and the state digest. It has no hash chain, no signatures, and one replica.
+
+**Several signers for a release.** A release of Tier A code, of the Airspace Model, or of the envelope parameters takes effect only with signatures from parties in different organizations: for example the program, the safety oversight office, and the operating facility. Staged release (section 9.4) then limits what a bad release can do if it passes all of them.
+
+**What replication does not fix**
+
+| Single point | Why replicas do not help | The design's answer |
+|---|---|---|
+| The radio | One aircraft hears one frequency, from the radio sites in range. | Redundant radio sites and network paths. Lost-communication procedures. Contracts that stay safe with no further clearance (P4). |
+| A false input | Replicas can agree perfectly on a spoofed position. | Independent sensor types, and the cross-check of assumption A1. |
+| A shared defect | Identical replicas compute the same wrong answer, and consensus hands a bad input to all of them. | Verifier implementations of different kinds, under the unanimity rule. Quarantine and staggered apply (section 9.4). |
+| A partition | The side without a quorum cannot commit. Aircraft keep flying. | Coast time, and island mode with limited powers (section 9.2). |
+| The specification | A wrong separation rule is replicated faithfully. | Formal proof, public scrutiny of the specification (section 13), and operation in shadow. |
+| The operator | One organization runs every replica. | Several signers for a release, outside witnesses for the record, and independent safety oversight. Replicas run by other organizations are possible and are not required. |
+
+**What the design does not take from public blockchains.** Open membership, tokens, mining or staking, and finality that is slow or only probable. Every participant here is known and accountable, and a commit must be final in under half a second†. Delivery to the aircraft then takes seconds. The Tactical Safety Net does not wait for a commit: it is local and independent.
+
 ## 10. Security
 
 A unified stack is a larger target, and several of its inputs are not authenticated today.
@@ -520,7 +563,7 @@ A unified stack is a larger target, and several of its inputs are not authentica
 - **Voice.** VHF voice is not authenticated. The Monitor detects the effect of a false instruction, because an aircraft that follows it leaves its envelope.
 - **Data link.** Current data link has weak authentication. The Gateway signs clearances wherever the link standard supports it. A move to authenticated IP-based links is on the roadmap.
 - **Network.** No component trusts the network. Every connection is mutually authenticated. Sensor and radio sites have two independent paths. Operational data leaves the Tier A network through one-way gateways. External data enters only through the quarantine of section 9.4.
-- **Supply chain and insiders.** Releases are signed and reproducible. A change to Tier A code or Tier A data needs two people. Hardware security modules at FAA sites hold the keys.
+- **Supply chain and insiders.** Releases are signed and reproducible. A change to Tier A code or Tier A data needs two people, and its release needs signatures from parties in different organizations (section 9.5). Hardware security modules hold the keys. A kernel host cannot issue a clearance alone: the radio site checks the quorum certificate.
 - **Recovery.** The Backup Separation Display, hold state, and the manual rate are also the answer to a successful attack on the main stack.
 
 ## 11. Safety assurance
@@ -582,6 +625,17 @@ Phase 2 is the largest risk in the plan and also its largest value. It is a full
 
 **Ownership.** The government owns the Verifier specification, the interface specifications, the Airspace Model, the recorded data, and the safety case. It holds full rights to Tier A source code. Vendors build components to open interfaces and pass conformance tests. Two independent teams build the two Verifier implementations.
 
+**Open source.** The kernel specification, its proofs, the source of the kernel and of each Verifier implementation, the simulator, the scenario set, and the format of the Airspace Model are published under an open licence.
+
+- *Open to read and to propose. Gated to change.* Anyone can read, test, and propose. A change enters the operational baseline only through the release process and its evidence gates.
+- *What stays closed.* Live traffic data, keys, site configuration, and protected flights.
+- *What it buys.* Scrutiny of the specification and the proofs. Verifier implementations by authors who do not know each other; one author wrote both in the prototype. A public test bench: anyone can submit a planner, and the kernel judges it. A record that any party can check, because the replay tool is public (section 9.5).
+- *What it does not buy.* Certification or adoption. An operator still owns the safety case and is accountable for every clearance.
+- *Security.* The system must be safe against an adversary who has read the source. Section 10 already assumes that. The project runs a coordinated disclosure process.
+- *Precedent.* The seL4 verified kernel, NASA's detect-and-avoid algorithms and core flight software, and the InterUSS platform for drone traffic are open.
+
+This repository has taken the first steps: the Apache License 2.0, a notice that the code is not for operational use, a security policy, contribution rules, and continuous integration. The project was first called AutoATC. An add-on for the X-Plane simulator already has that name, so the project is now Clearway, and its Go module has the public path `github.com/teddyknox/clearway`.
+
 **Technical authority.** A small government engineering team owns the architecture and the kernel specification. An integrator coordinates delivery. It does not own the design.
 
 **Funding by demonstrated capability.** Each tranche follows a measured result: replay passed, shadow coverage reached, a cell retired from the legacy system. Congress has said that it wants proof of progress before more funding. Shadow metrics give that proof early.
@@ -605,7 +659,8 @@ Phase 2 is the largest risk in the plan and also its largest value. It is a full
 | **B. An AI controller per sector.** A learned agent does the controller's job by voice. | No change to aircraft or airspace structure. Fast to demonstrate. | No method exists to assure a learned policy at the required risk. It keeps the sector and voice limits. Such an agent is usable inside this design as a Planner proposal source. |
 | **C. Airborne self-separation.** Aircraft separate themselves. | Removes the ground bottleneck in cruise. | Needs fleet-wide equipage and certification. Flow and airports still need a ground system. |
 | **D. Facility consolidation and remote towers alone.** | Real savings and resilience. | Does not change who separates aircraft or how. It is compatible with this design. |
-| **E. This design.** | Automation with an assurable safety argument. One platform. Staged authority. | Highest program complexity. Needs rulemaking and long shadow periods. |
+| **E. A public blockchain as the record of clearances.** | No operator to trust. A record that cannot be changed unseen. | Finality is slow or only probable. Open membership has no accountable participants. It does nothing for radios, sensors, or shared software defects. The design takes its useful core: replicas that tolerate a lying node, and a hash-chained record (section 9.5). |
+| **F. This design.** | Automation with an assurable safety argument. One platform. Staged authority. | Highest program complexity. Needs rulemaking and long shadow periods. |
 
 ## 15. Risks and required decisions
 
@@ -624,6 +679,7 @@ Phase 2 is the largest risk in the plan and also its largest value. It is a full
 | Program execution. | Section 13. | High. FAA modernization programs have a record of delay. |
 | Cyber attack or navigation interference. | Section 10. | Persistent. |
 | Legal authority and liability are undefined. | Rulemaking item 1. | Blocks L3 until resolved. |
+| A compromised kernel host or an insider issues a false clearance. | Quorum certificates checked at the radio site. Several signers for a release. A record that outside witnesses hold (section 9.5). | A quorum that colludes. Voice itself is still not authenticated. |
 | Loss of workforce or public trust. | Co-design, published evidence, complete records for investigators. | One accident attributed to automation could stop the program. |
 | Data link capacity. | Authenticated IP-based links on the roadmap. | Limits L3 traffic share in the first years. |
 | Interference between old and new equipment during migration. | Cell-by-cell change, hot fallback, quarantine at every interface. | Present through phase 2. |
@@ -637,6 +693,9 @@ Phase 2 is the largest risk in the plan and also its largest value. It is a full
 | Equipage rule for Class A | Start now. | En route stays at mixed-mode L3. |
 | CAP shape | Government-owned kernel specification and open interfaces. | A single-vendor platform makes the two-implementation Verifier and staged authority hard to obtain. |
 | Safety oversight | Independent of the program, with pre-registered gates. | Promotion decisions lose credibility. |
+| Replica fault model | Tolerate a lying replica: four replicas and quorum certificates. | Replication that tolerates only a stopped replica is cheaper, and it trusts every kernel host. |
+| Openness | Publish the kernel specification and source. | A closed kernel loses outside scrutiny, outside Verifier authors, and outside checking of the record. |
+| Licence | Apache-2.0, adopted for this repository: its patent grant suits government and vendor use. | A copyleft licence keeps derived work open and deters some vendors. |
 
 ## 16. Measures of success
 
@@ -685,4 +744,7 @@ Phase 2 is the largest risk in the plan and also its largest value. It is a full
 - EUROCONTROL Point Merge, an example of closed arrival trajectories.
 - Outages: Los Angeles Center, April 2014. FAA NOTAM system, January 2023. NATS flight-plan processing, August 2023.
 - The NTSB's March 2025 urgent recommendation on helicopter Route 4 at Washington National (75 ft vertical spacing).
+- L. Lamport, R. Shostak, and M. Pease, "The Byzantine Generals Problem", 1982. M. Castro and B. Liskov, "Practical Byzantine Fault Tolerance", 1999. Basis of the replica rule in section 9.5.
+- Certificate Transparency (RFC 6962): an append-only, hash-chained log with outside witnesses. The model for the checkable record.
+- Open precedents: the seL4 microkernel, NASA's DAIDALUS and core Flight System, and the InterUSS platform.
 - The 0.99999 availability class for critical FAA services. Mandatory controller retirement at 56. The ADS-B Out rule (published 2010, compliance 2020).

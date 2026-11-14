@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"autoatc/internal/sim"
+	"github.com/teddyknox/clearway/internal/sim"
 )
 
 func get(t *testing.T, h http.Handler, url string) *httptest.ResponseRecorder {
@@ -19,7 +19,7 @@ func get(t *testing.T, h http.Handler, url string) *httptest.ResponseRecorder {
 
 func TestPageAndCatalogAreServed(t *testing.T) {
 	h := newMux("")
-	for path, want := range map[string]string{"/": "AutoATC cell viewer", "/app.js": "aircraftAt", "/style.css": "--orange"} {
+	for path, want := range map[string]string{"/": "Clearway cell viewer", "/app.js": "aircraftAt", "/style.css": "--orange"} {
 		w := get(t, h, path)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), want) {
 			t.Errorf("%s: status %d, missing %q", path, w.Code, want)

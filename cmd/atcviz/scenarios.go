@@ -1,6 +1,6 @@
 package main
 
-import "autoatc/internal/sim"
+import "github.com/teddyknox/clearway/internal/sim"
 
 // Scenario is one world that the viewer can run.
 type Scenario struct {

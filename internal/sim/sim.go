@@ -11,11 +11,11 @@ import (
 	"math/rand/v2"
 	"sort"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/kernel"
-	"autoatc/internal/planner"
-	"autoatc/internal/safetynet"
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/kernel"
+	"github.com/teddyknox/clearway/internal/planner"
+	"github.com/teddyknox/clearway/internal/safetynet"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 // Config selects one simulation run.

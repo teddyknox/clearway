@@ -3,7 +3,7 @@ package sim
 import (
 	"testing"
 
-	"autoatc/internal/kernel"
+	"github.com/teddyknox/clearway/internal/kernel"
 )
 
 func run(t *testing.T, mut func(*Config)) *Report {

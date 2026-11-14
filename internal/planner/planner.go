@@ -11,9 +11,9 @@ import (
 	"math/rand/v2"
 	"sort"
 
-	"autoatc/internal/geom"
-	"autoatc/internal/kernel"
-	"autoatc/internal/traj"
+	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/kernel"
+	"github.com/teddyknox/clearway/internal/traj"
 )
 
 // ClimbRate is the conservative vertical rate used to size a transition (ft/s).
