@@ -40,6 +40,27 @@ type Config struct {
 	PRefuse     float64 // per clearance received
 
 	Record bool // keep the kernel input log
+
+	// Scripted, if not empty, replaces random traffic with these flights.
+	Scripted []ScriptedFlight
+}
+
+// ScriptedFlight is one hand-placed flight for a demonstration scenario.
+// Angles are in degrees, counter-clockwise from east, on the cell boundary.
+type ScriptedFlight struct {
+	At       float64 // time of the admission request (s); entry follows 15 min later
+	EntryDeg float64
+	ExitDeg  float64
+	Level    float64 // ft
+	SpeedKt  float64
+	StepFrac float64 // planned level change at this fraction of the transit; 0 for none
+	StepBy   float64 // ft
+
+	BlunderFrac float64 // the aircraft leaves its route at this fraction; 0 for none
+	BlunderDeg  float64
+	BustFrac    float64 // the aircraft leaves its level at this fraction; 0 for none
+	BustBy      float64
+	NoRadio     bool
 }
 
 // DefaultConfig returns a six-hour run at 120 flights per hour with all
@@ -166,6 +187,7 @@ type world struct {
 	conflicts  map[[3]int]*conflictEpisode
 	coast      []float64
 	rep        Report
+	tr         *recorder // nil unless the run is traced for the viewer
 }
 
 // Run executes one simulation and returns its report.
@@ -241,6 +263,33 @@ func (w *world) generateTraffic() {
 	r := rand.New(rand.NewPCG(w.cfg.Seed, 0x74726166))
 	R := w.cfg.Kernel.CellRadius
 	K := w.cfg.Kernel.K
+	if len(w.cfg.Scripted) > 0 {
+		script := append([]ScriptedFlight(nil), w.cfg.Scripted...)
+		sort.SliceStable(script, func(i, j int) bool { return script[i].At < script[j].At })
+		for i, sf := range script {
+			a := &arrival{id: kernel.FlightID(i + 1), firstRequest: sf.At, requestAt: sf.At}
+			a.entry = geom.Polar(R, sf.EntryDeg*math.Pi/180)
+			a.exit = geom.Polar(R, sf.ExitDeg*math.Pi/180)
+			a.dir = a.exit.Sub(a.entry).Unit()
+			a.speed, a.level = sf.SpeedKt*geom.Kt, sf.Level
+			a.stepFrac, a.stepBy = sf.StepFrac, sf.StepBy
+			a.drift = (r.Float64()*2 - 1) * 0.8 * K
+			a.latAmp = r.Float64() * 0.3 * w.cfg.Kernel.W
+			a.latPhase = r.Float64() * 2 * math.Pi
+			a.latOmega = 2 * math.Pi / (120 + 280*r.Float64())
+			a.climbFactor = 1.1 + 0.4*r.Float64()
+			a.blunderFrac, a.bustFrac = -1, -1
+			if sf.BlunderFrac > 0 {
+				a.blunderFrac, a.blunderTurn = sf.BlunderFrac, sf.BlunderDeg*math.Pi/180
+			}
+			if sf.BustFrac > 0 {
+				a.bustFrac, a.bustBy = sf.BustFrac, sf.BustBy
+			}
+			a.nordo = sf.NoRadio
+			w.arrivals = append(w.arrivals, a)
+		}
+		return
+	}
 	rate := w.cfg.FlightsPerHour / 3600
 	id := kernel.FlightID(1)
 	for t := r.ExpFloat64() / rate; t < w.cfg.Duration-approachTime; t += r.ExpFloat64() / rate {
@@ -333,6 +382,7 @@ func (w *world) admit() {
 					w.env.Plans[a.id] = &planner.Plan{Exit: tr.PosAt(tr.End()), Speed: a.speed, Level: level}
 					w.spawns = append(w.spawns, newAircraft(a, tr, transit))
 					w.rep.Admitted++
+					w.tr.event(TraceEvent{T: w.now, Kind: "admit", A: int(a.id), Alt: level})
 					w.rep.EntryDelaySum += tr.Start() - a.firstRequest
 					w.rep.EntryDelayMax = math.Max(w.rep.EntryDelayMax, tr.Start()-a.firstRequest)
 					if dl != 0 {
@@ -420,9 +470,11 @@ func (w *world) processDeliveries() {
 			} else if d.ack {
 				w.k.Ack(d.flight)
 				w.rep.ClearancesAcked++
+				w.tr.event(TraceEvent{T: w.now, Kind: "ack", A: int(d.flight)})
 			} else {
 				w.k.Refuse(d.flight)
 				w.rep.ClearancesRefused++
+				w.tr.event(TraceEvent{T: w.now, Kind: "refuse", A: int(d.flight)})
 			}
 			w.failStreak[d.flight] = 0
 			delete(w.env.NoComm, d.flight)
@@ -435,6 +487,7 @@ func (w *world) processDeliveries() {
 			if current {
 				w.k.DeliveryFailed(d.flight)
 				w.rep.ClearancesFailed++
+				w.tr.event(TraceEvent{T: w.now, Kind: "fail", A: int(d.flight)})
 			}
 			w.failStreak[d.flight]++
 			if w.failStreak[d.flight] >= 2 {
@@ -515,6 +568,7 @@ func (w *world) checkSeparation(in []*aircraft) {
 				}
 				break
 			}
+			w.tr.event(TraceEvent{T: w.now, Kind: "loss", A: int(a.id), B: int(b.id), Txt: cat, Num: dist, Alt: math.Abs(a.alt - b.alt)})
 			if len(w.rep.LossDetail) < 20 {
 				w.rep.LossDetail = append(w.rep.LossDetail, fmt.Sprintf(
 					"t=%.0f flights %d,%d %s: %.2f nm, %.0f ft", w.now, a.id, b.id, cat, dist, math.Abs(a.alt-b.alt)))
@@ -535,18 +589,23 @@ func (w *world) safetyNet(in []*aircraft) {
 		key := pair(kernel.FlightID(al.A), kernel.FlightID(al.B))
 		if last, seen := w.alerts[key]; !seen || w.now-last > 30 {
 			st := w.k.PairState(key[0], key[1])
+			class := "intruder"
 			switch {
 			case st == kernel.PairVerified && w.k.PairWindow(key[0], key[1]) >= w.now+w.net.P.LookAhead:
 				// The kernel holds the pair as separated beyond the net's
 				// look-ahead. Either the net or the kernel is wrong.
+				class = "verified"
 				w.rep.AlertsVerified++
 				w.watch[key] = &alertWatch{until: w.now + 240, closest: math.Inf(1)}
 			case st == kernel.PairVerified || st == kernel.PairExpired:
+				class = "unresolved"
 				w.rep.AlertsUnresolved++
 			default:
 				w.rep.AlertsIntruder++
 			}
+			w.tr.event(TraceEvent{T: w.now, Kind: "alert", A: int(key[0]), B: int(key[1]), Num: al.TimeToLoss, Txt: class})
 		}
+		w.tr.alerting(key, al.TimeToLoss)
 		w.alerts[key] = w.now
 		if al.Instruct && w.cfg.SafetyNet {
 			id := kernel.FlightID(al.Flight)
@@ -561,6 +620,11 @@ func (w *world) safetyNet(in []*aircraft) {
 				w.k.MarkIntruder(id)
 				w.rep.Instructions++
 				w.instructed[id] = instruction{at: w.now, other: other, nuisance: nuisance}
+				txt := ""
+				if nuisance {
+					txt = "false alert"
+				}
+				w.tr.event(TraceEvent{T: w.now, Kind: "instruct", A: int(id), B: int(other), Alt: al.TargetAlt, Txt: txt})
 			}
 		}
 	}
@@ -655,6 +719,9 @@ func (w *world) run() {
 				continue
 			}
 			w.ac[ac.id] = ac
+			if ac.arr.nordo {
+				w.tr.event(TraceEvent{T: w.now, Kind: "fault", A: int(ac.id), Txt: "has no radio"})
+			}
 			i := sort.Search(len(w.order), func(i int) bool { return w.order[i] >= ac.id })
 			w.order = append(w.order, 0)
 			copy(w.order[i+1:], w.order[i:])
@@ -667,7 +734,16 @@ func (w *world) run() {
 		var gone []kernel.FlightID
 		for _, id := range w.order {
 			ac := w.ac[id]
+			wasFree, wasBusting := ac.mode == modeFree, ac.busting
 			ac.step(w.now, dt)
+			if w.tr != nil {
+				if !wasFree && ac.mode == modeFree {
+					w.tr.event(TraceEvent{T: w.now, Kind: "fault", A: int(id), Txt: "leaves its route"})
+				}
+				if !wasBusting && ac.busting {
+					w.tr.event(TraceEvent{T: w.now, Kind: "fault", A: int(id), Txt: "leaves its level", Alt: ac.bustTarget})
+				}
+			}
 			inside := ac.pos.Norm() <= R
 			if inside && !ac.inside && math.IsNaN(ac.enteredAt) {
 				ac.enteredAt = w.now
@@ -729,6 +805,11 @@ func (w *world) run() {
 				w.fb.Act(w.env)
 			}
 			planner.Recontract(w.env)
+		}
+		if s%5 == 0 {
+			// After every action of this second, so that a frame shows the
+			// state that its counters describe.
+			w.tr.frame(w)
 		}
 	}
 	for _, ep := range w.conflicts {

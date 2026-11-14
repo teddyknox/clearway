@@ -4,7 +4,7 @@
 |---|---|
 | Status | Prototype 0.1, 2026-11-14 |
 | Scope | The kernel of [design.md](design.md) section 6 for one en route cell, with a fast-time simulator around it |
-| Code | Go 1.26, standard library only. About 3,900 lines plus 1,200 lines of tests. |
+| Code | Go 1.26, standard library only, with a viewer in plain JavaScript. |
 
 The prototype exists to answer two questions.
 
@@ -36,6 +36,7 @@ These are results of a simplified model (section 9). They test the logic of the 
 | `internal/sim` | — | True aircraft states, traffic, clearance delivery, faults, measurement |
 | `internal/arch` | — | Tests that enforce the dependency rules of the design |
 | `cmd/atcsim` | — | Command-line tool and experiment runner |
+| `cmd/atcviz` | — | Viewer: runs a scenario, records it, and replays it in a browser (section 10) |
 
 | Modelled | Not modelled |
 |---|---|
@@ -292,3 +293,57 @@ The design document is updated with these points.
 - **The planner is simple.** The density results describe this heuristic planner, not the limit of the design.
 - **Speed changes are not modelled exactly.** An aircraft that is early by some seconds is early by a different distance on a faster leg. The model covers this with margin and does not treat it exactly.
 - **Parameters are untuned.** Every value in section 4.2 is an initial value.
+
+## 10. Viewer
+
+`cmd/atcviz` replays any scenario in a browser. It runs the simulation on request, records it, and serves a page that draws the recording.
+
+```bash
+go run ./cmd/atcviz
+```
+
+Then open <http://127.0.0.1:8787>.
+
+### 10.1 What it shows
+
+| Part | Content |
+|---|---|
+| Map | Every aircraft at its true position, drawn by what the kernel believes about it. Shape and colour both carry the state, so colour is never the only signal. |
+| Proposals | Each proposal at the moment the Verifier decides. A committed one flashes blue and becomes a dashed pending route. A rejected one flashes as a dashed line with a cross and the reason. |
+| Predicted conflicts | A line from each of the two flights to the point where they would meet, with the time left. The line gets heavier as the time runs out. |
+| Intruders | An orange diamond with the cone that the kernel protects around it. |
+| Safety Net | An aqua ring on both aircraft of an alert, and the instruction beside the aircraft that receives one. |
+| Selected flight | Its route ahead, the envelope that the kernel protects along it for the next 20 minutes, and a flight strip with its state as the kernel sees it and as it truly is. |
+| Side view | Flight level against west-to-east position, aligned with the map. |
+| Timeline | Proposals committed and rejected per interval, and marks for faults, intruders, alerts, instructions, and losses. Click or drag to move. |
+| Right panel | Counts at the current time: the Verifier's verdicts by reason, Safety Net alerts by class, and losses by class. A loss of the kernel class is flagged. |
+
+Three hues carry meaning: blue for a clearance in flight, orange for anything outside the kernel's guarantee, aqua for the Safety Net. The set passes a colour-vision check on the light and on the dark map.
+
+Controls: space plays and pauses, the arrow keys step 10 seconds (60 with shift), the wheel zooms, a drag pans, a click selects a flight. A link can name a moment, for example `?scenario=chaos&t=2040&sel=12&paused=1&theme=dark`.
+
+### 10.2 Scenarios
+
+| Scenario | What it shows |
+|---|---|
+| Two aircraft, head-on | One predicted conflict from first sight to resolution. Speed changes are rejected; a level change is committed. |
+| Two crossing streams | Eight aircraft that would meet at one point. Each amendment must also clear the amendments already committed. |
+| One aircraft turns into a stream | The Monitor reports the deviation, the kernel draws a cone, the Safety Net instructs, and the intruder gets a new contract. |
+| One aircraft leaves its level | A wrong selected altitude under traffic 1,000 ft above. The Monitor and the Safety Net act within one surveillance period. |
+| Normal operations | 120 flights per hour with every layer on. |
+| Dense traffic | 240 flights per hour. |
+| A hostile planner | The chaos planner with the lower layers on, with one false Safety Net instruction near minute 34. |
+| A hostile planner, kernel alone | The same run with no Fallback Resolver and a Safety Net that only alerts. |
+| Aircraft that disobey | 8% leave the route, 8% leave the level, 3% have no radio. Two Safety Net instructions keep intruders clear. |
+| Aircraft that disobey, net alerts only | The same run without instructions: two losses of the intruder class. |
+| Lost messages | Clearances with no answer, and the Monitor settling which route is flown. |
+| A faulty Verifier, alone | Losses of the kernel class: the one scenario that has them. |
+| The same faulty Verifier, with a correct one | Same traffic and seed: no loss, and alarms. |
+
+The seeds of the hostile-planner, disobeying-aircraft, and faulty-Verifier scenarios are chosen so that the event happens inside the default duration. `TestScenariosShowTheirPoint` holds every description in the list to what the run does. `TestTraceAgreesWithTheRun` checks that recording a run does not change it.
+
+### 10.3 Limits of the viewer
+
+- It shows true positions every five seconds and moves aircraft in straight lines between them.
+- The envelope around the selected flight is drawn from its present speed along its path. It is a close picture of the kernel's tube, not the tube itself.
+- A recording is held in memory. Runs longer than about four hours at high density become slow to load.

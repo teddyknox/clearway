@@ -23,6 +23,12 @@ go run ./cmd/atcsim
 go run ./cmd/atcsim -exp all -hours 24 -seeds 8
 ```
 
+Watch a scenario in the browser, at <http://127.0.0.1:8787>:
+
+```bash
+go run ./cmd/atcviz
+```
+
 | Path | Content |
 |---|---|
 | `internal/kernel` | Contract Store, Clearance Verifier (two implementations), Conformance Monitor |
@@ -30,5 +36,6 @@ go run ./cmd/atcsim -exp all -hours 24 -seeds 8
 | `internal/planner` | Heuristic planner, Fallback Resolver, and a hostile planner for tests |
 | `internal/sim` | Fast-time simulation of one en route cell |
 | `cmd/atcsim` | Command-line tool and experiment runner |
+| `cmd/atcviz` | Viewer: replays a scenario on a map, with the kernel's verdicts |
 
 This is an independent design study. It is not an FAA document.

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoATC cell viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail rail-left" aria-label="Scenarios and display options">
+    <header class="brand">
+      <h1>AutoATC</h1>
+      <p>One cell of airspace, replayed</p>
+    </header>
+
+    <nav id="scenarios" aria-label="Scenarios"></nav>
+
+    <form class="run" id="runForm">
+      <label>Seed <input id="seed" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label>Minutes <input id="minutes" type="number" min="5" max="240" step="5" inputmode="numeric"></label>
+      <button type="submit" id="run">Run scenario</button>
+    </form>
+
+    <section class="layers" aria-labelledby="layersTitle">
+      <h2 id="layersTitle">Show on the map</h2>
+      <label><input type="checkbox" data-layer="labels" checked> Flight labels</label>
+      <label><input type="checkbox" data-layer="routes"> Every cleared route</label>
+      <label><input type="checkbox" data-layer="envelopes"> Protected envelopes</label>
+      <label><input type="checkbox" data-layer="conflicts" checked> Predicted conflicts</label>
+      <label><input type="checkbox" data-layer="rejected" checked> Rejected proposals</label>
+      <label><input type="checkbox" data-layer="truth" checked> Faults the kernel has not seen yet</label>
+    </section>
+
+    <section class="legend" aria-labelledby="legendTitle">
+      <h2 id="legendTitle">Reading the map</h2>
+      <ul>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><path class="g-ink" d="M7 0 L-5 4.5 L-2 0 L-5 -4.5 Z"/></svg> Under contract, conforming</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><path class="g-blue" d="M7 0 L-5 4.5 L-2 0 L-5 -4.5 Z"/></svg> Amendment sent, waiting for the crew</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><path class="g-blue-hollow" d="M7 0 L-5 4.5 L-2 0 L-5 -4.5 Z"/></svg> No answer: either route may be flown</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><path class="g-orange" d="M0 -6.5 L6.5 0 L0 6.5 L-6.5 0 Z"/></svg> Intruder: outside the kernel's guarantee</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><circle class="g-aqua-ring" r="6.5"/></svg> Safety Net alert or instruction</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><path class="g-blue-line" d="M-8 3 L8 -3"/></svg> Proposal that the kernel committed</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><path class="g-dash" d="M-8 3 L4 -1.5"/><path class="g-cross" d="M3 -5 L8 0 M8 -5 L3 0"/></svg> Proposal that the kernel rejected</li>
+        <li><svg viewBox="-9 -9 18 18" aria-hidden="true"><circle class="g-orange" r="7"/><path class="g-cross-on" d="M-3 -3 L3 3 M3 -3 L-3 3"/></svg> Loss of separation</li>
+      </ul>
+    </section>
+
+    <button type="button" id="theme" class="quiet">Switch to dark</button>
+  </aside>
+
+  <main class="stage">
+    <p class="watch" id="watch"></p>
+    <div class="scope" id="scope">
+      <canvas id="map" tabindex="0" aria-label="Map of the cell. Drag to pan, scroll to zoom, click an aircraft to select it."></canvas>
+      <div class="overlay" id="overlay" hidden></div>
+      <div class="tip" id="tip" hidden></div>
+      <button type="button" id="resetView" class="quiet floating">Reset view</button>
+    </div>
+    <canvas id="side" aria-label="Side view of the cell: position west to east against flight level."></canvas>
+    <div class="transport">
+      <button type="button" id="play">Play</button>
+      <label class="speed">Speed
+        <select id="speed">
+          <option value="1">1×</option>
+          <option value="10">10×</option>
+          <option value="30" selected>30×</option>
+          <option value="60">60×</option>
+          <option value="120">120×</option>
+          <option value="300">300×</option>
+        </select>
+      </label>
+      <button type="button" id="prevEvent" class="quiet">Previous event</button>
+      <button type="button" id="nextEvent" class="quiet">Next event</button>
+      <span class="timeline-key">Proposals per interval: <i class="key key-blue"></i> committed <i class="key key-ink"></i> rejected</span>
+    </div>
+    <canvas id="timeline" aria-label="Timeline. Click or drag to move through the run."></canvas>
+  </main>
+
+  <aside class="rail rail-right" aria-label="State of the cell">
+    <section class="clock">
+      <div class="time" id="clock">00:00:00</div>
+      <div class="sub" id="clockSub">&nbsp;</div>
+    </section>
+
+    <section aria-labelledby="stripTitle" id="stripSection" hidden>
+      <h2 id="stripTitle">Selected flight</h2>
+      <div class="strip" id="strip"></div>
+    </section>
+
+    <section aria-labelledby="cellTitle">
+      <h2 id="cellTitle">Aircraft in the cell</h2>
+      <dl class="triple">
+        <div><dt>Under contract</dt><dd id="nContract">0</dd></div>
+        <div><dt>Amendment in flight</dt><dd id="nPending">0</dd></div>
+        <div><dt>Intruders</dt><dd id="nIntruder">0</dd></div>
+      </dl>
+      <dl class="rows">
+        <div><dt>Predicted conflicts</dt><dd id="nConflicts">0</dd></div>
+        <div><dt>Coast time</dt><dd id="coast">–</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="verTitle">
+      <h2 id="verTitle">Verifier</h2>
+      <div class="split" id="verSplit" role="img" aria-label="Proposals committed and rejected">
+        <span class="split-a" id="verA"></span><span class="split-b" id="verB"></span>
+      </div>
+      <dl class="rows">
+        <div><dt><i class="key key-blue"></i> Committed</dt><dd id="nCommit">0</dd></div>
+        <div><dt><i class="key key-ink"></i> Rejected</dt><dd id="nReject">0</dd></div>
+      </dl>
+      <dl class="rows reasons" id="reasons"></dl>
+      <dl class="rows" id="alarmRow" hidden>
+        <div><dt>Alarms: the two Verifiers disagree</dt><dd id="nHard">0</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="netTitle">
+      <h2 id="netTitle">Safety Net</h2>
+      <dl class="rows">
+        <div><dt>Alerts with an intruder</dt><dd id="nAlertI">0</dd></div>
+        <div><dt>Alerts on a conflict the kernel also predicted</dt><dd id="nAlertU">0</dd></div>
+        <div><dt>False alerts on a verified pair</dt><dd id="nAlertV">0</dd></div>
+        <div><dt>Instructions issued</dt><dd id="nInstr">0</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="lossTitle">
+      <h2 id="lossTitle">Losses of separation</h2>
+      <dl class="rows">
+        <div id="lossKRow"><dt>Kernel: conforming, verified pair</dt><dd id="nLossK">0</dd></div>
+        <div><dt>Unresolved: predicted, nothing acted</dt><dd id="nLossU">0</dd></div>
+        <div><dt>Intruder: an aircraft had left its contract</dt><dd id="nLossI">0</dd></div>
+        <div><dt>Monitor latency</dt><dd id="nLossL">0</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="logTitle" class="log-section">
+      <h2 id="logTitle">What just happened</h2>
+      <ol class="log" id="log"></ol>
+    </section>
+  </aside>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -38,7 +38,9 @@ type Env struct {
 	MinLevel float64
 	MaxLevel float64
 	OnCommit func(id kernel.FlightID, c *kernel.Contract, source string)
-	Stats    map[string]*Counter
+	// OnPropose, if set, sees every proposal and the kernel's verdict.
+	OnPropose func(id kernel.FlightID, tr *traj.Trajectory, source string, v kernel.Verdict)
+	Stats     map[string]*Counter
 
 	handled map[kernel.FlightID]bool
 	lastTry map[[2]kernel.FlightID]float64
@@ -68,6 +70,9 @@ func (e *Env) propose(id kernel.FlightID, tail *traj.Trajectory, source string) 
 	c := e.stat(source)
 	c.Proposed++
 	v := e.K.Propose(id, tail, kernel.Automation)
+	if e.OnPropose != nil {
+		e.OnPropose(id, tail, source, v)
+	}
 	if !v.OK {
 		return false
 	}
@@ -300,7 +305,11 @@ func Recontract(e *Env) {
 				break
 			}
 			c.Proposed++
-			if v := e.K.ProposeRecontract(id, tr, kernel.Automation); v.OK {
+			v := e.K.ProposeRecontract(id, tr, kernel.Automation)
+			if e.OnPropose != nil {
+				e.OnPropose(id, tr, "recontract", v)
+			}
+			if v.OK {
 				c.Committed++
 				e.OnCommit(id, v.Contract, "recontract")
 				break

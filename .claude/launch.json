@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "atcviz",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/atcviz", "-web", "cmd/atcviz/web"],
+      "port": 8787
+    }
+  ]
+}
