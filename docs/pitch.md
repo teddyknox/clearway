@@ -90,7 +90,7 @@ Each row is a claim in the pitch, what must exist for it to be true, and where t
 | Claim | What must exist | Today |
 |---|---|---|
 | A machine-checked proof, checked again by outsiders | A formal specification of the kernel, a proof of its invariants, and two reviewers outside the project | Tests and a brute-force oracle |
-| Four Verifiers by four teams that never met | A specification that others can build from, a conformance suite, and three more authors | Two implementations by one author |
+| Four Verifiers by four teams that never met | A specification that others can build from, a conformance suite, and three more authors | Specification 0.1 and a suite of 588 vectors. Two implementations by one author |
 | Two years of shadow at twenty centers | Access to live surveillance and flight data, an agreement with the FAA, and a recorder that runs without a break | A simulator. No access to data |
 | Outsiders replayed the public record | A hash-chained log, signed checkpoints, a public replay tool, and witnesses who take it up | Replay and a state digest |
 | The kernel would have refused most recorded losses | Recorded losses of separation, matched with the clearances that led to them | None |

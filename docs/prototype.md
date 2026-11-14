@@ -37,6 +37,7 @@ These are results of a simplified model (section 9). They test the logic of the 
 | `internal/arch` | — | Tests that enforce the dependency rules of the design |
 | `cmd/atcsim` | — | Command-line tool and experiment runner |
 | `cmd/atcviz` | — | Viewer: runs a scenario, records it, and replays it in a browser (section 10) |
+| `internal/conformance`, `cmd/conform` | — | Test vectors for a Verifier in any language, the rules that judge an answer, and the runner. See [spec.md](spec.md) |
 
 | Modelled | Not modelled |
 |---|---|
@@ -140,6 +141,7 @@ A loss of separation is two aircraft inside the cell closer than 5 nm and closer
 | `TestSecondImplementationCatchesFaultyVerifier` | A faulty implementation alone loses separation. Beside a correct one it does not, and alarms are raised. |
 | `TestAircraftFaults`, `TestLostCommunications` | Faults and lost messages never become kernel-class losses. |
 | `TestDeterminismAndReplay` | One seed gives one result. The kernel input log replays to the same state. |
+| `internal/conformance` | Both implementations pass the 588 conformance vectors. A Verifier in Python passes them through the line protocol. Fourteen Verifiers with one deliberate defect each all fail. |
 | `internal/arch` | The kernel does not import the planner, the simulator, the Safety Net, random numbers, or the clock. The Safety Net imports nothing from the module. The two implementations do not call each other's geometry. |
 
 ## 6. Results

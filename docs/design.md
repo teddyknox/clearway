@@ -5,6 +5,7 @@
 | Status | Draft 0.1, 2026-11-14 |
 | Scope | Architecture, safety approach, migration path. No cost estimate. |
 | Standing | Independent design study. Not an FAA document. |
+| Specification | [spec.md](spec.md): the exact definition of a tube, of separation, and of what a Verifier must do |
 | Prototype | [prototype.md](prototype.md): the kernel of section 6 for one en route cell, with simulation results. Changes that it forced are marked "(prototype)". [gap-analysis.md](gap-analysis.md) lists what separates it from this design. |
 
 **Conventions.** A dagger (†) marks an initial design value. Simulation must confirm or replace it. Section 17 separates the sources checked for this draft from prior art cited from general knowledge.

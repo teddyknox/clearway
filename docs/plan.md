@@ -6,6 +6,8 @@
 | Covers | December 2026 to November 2029 |
 | Reads with | [pitch.md](pitch.md) for the target, [gap-analysis.md](gap-analysis.md) for the starting point |
 
+**Progress.** 2026-11-14: [specification 0.1](spec.md) and the [conformance suite](../conformance/README.md) exist. The specification is in prose only. The first period still owes the formal statement.
+
 **Conventions.** A date is the last day on which a thing can become true and still serve the pitch. Staffing and reachability are my estimates, and they are rough. Section 9 lists the outside facts that were checked for this draft.
 
 ## 1. What working backwards shows

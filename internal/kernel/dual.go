@@ -47,9 +47,13 @@ func (d *Dual) Check(a, b *Tube, from, to float64, sp SepParams) (res Result, ha
 	if ra.Conflict {
 		approver, rej = d.B, ra
 	}
+	// Tighten in distance and in time. A shift in time moves the windows of
+	// the vertical segments, and it also moves a vertical uncertainty that
+	// grows with time.
 	tight := sp
 	tight.Sh += d.Tol
 	tight.VertSlack += d.TimeTol
+	tight.SvTrue += (a.VURate + b.VURate) * d.TimeTol
 	if approver.FirstConflict(a, b, from, to, tight).Conflict {
 		d.Marginal++
 		return rej, false

@@ -5,6 +5,8 @@ A design for automated air traffic control in the United States on one software 
 A clearway is the obstacle-free area beyond the end of a runway, kept clear so that a departing aircraft can climb over it. The project keeps the way ahead of every flight clear in the same sense: by guarantee, before the aircraft gets there.
 
 - [docs/design.md](docs/design.md): architecture, safety approach, and migration path.
+- [docs/spec.md](docs/spec.md): the kernel specification. A Verifier can be built from it in any language.
+- [conformance/](conformance/README.md): 588 test vectors that check a Verifier against the specification.
 - [docs/prototype.md](docs/prototype.md): what the prototype contains, how it is checked, and what the simulations show.
 - [docs/gap-analysis.md](docs/gap-analysis.md): what separates the prototype from a system that could carry traffic.
 - [docs/pitch.md](docs/pitch.md): the pitch we want to be able to make. It is a target, and nothing in it has happened yet.
@@ -28,6 +30,12 @@ go run ./cmd/atcsim
 go run ./cmd/atcsim -exp all -hours 24 -seeds 8
 ```
 
+Check a Verifier against the specification:
+
+```bash
+go run ./cmd/conform -builtin analytic
+```
+
 Watch a scenario in the browser, at <http://127.0.0.1:8787>:
 
 ```bash
@@ -42,6 +50,7 @@ go run ./cmd/atcviz
 | `internal/sim` | Fast-time simulation of one en route cell |
 | `cmd/atcsim` | Command-line tool and experiment runner |
 | `cmd/atcviz` | Viewer: replays a scenario on a map, with the kernel's verdicts |
+| `internal/conformance`, `cmd/conform` | The conformance suite for Verifier implementations, and its runner |
 
 ## Status
 
