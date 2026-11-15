@@ -1,0 +1,18 @@
+# The Clearway kernel in Rust, for the RISC-V machine of internal/rvm.
+#
+#   kernel  the kernel itself: no_std, no dependencies, no floating point
+#   rv      the program that runs in the machine (riscv32imac, bare metal)
+#   host    the same kernel as a native program, for development
+[workspace]
+members = ["kernel", "rv", "host"]
+resolver = "2"
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+debug = false
+strip = true
+# An overflow is a defect. It stops the program; it does not wrap.
+overflow-checks = true

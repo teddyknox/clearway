@@ -1,9 +1,18 @@
 package sim
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/ed25519"
+	"encoding/hex"
+	"flag"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/teddyknox/clearway/internal/conv"
 	"github.com/teddyknox/clearway/internal/kernel"
+	"github.com/teddyknox/clearway/internal/record"
 )
 
 func run(t *testing.T, mut func(*Config)) *Report {
@@ -143,27 +152,171 @@ func TestSecondImplementationCatchesFaultyVerifier(t *testing.T) {
 	t.Logf("faulty alone: %d losses; faulty with correct: %d losses, %d alarms", alone, paired, alarms)
 }
 
-// One seed gives one result. The kernel input log replays to the same state.
+// testKey is a signing key for tests. It protects nothing.
+var testKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
+
+func trust(k ed25519.PrivateKey) record.Options {
+	return record.Options{Trusted: []ed25519.PublicKey{k.Public().(ed25519.PublicKey)}}
+}
+
+// One seed gives one result, down to every byte of the kernel's record. The
+// record passes every check: the chain, the signatures, and a replay that
+// reproduces every verdict and every state digest.
 func TestDeterminismAndReplay(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Duration = 3600
 	cfg.Planner = "chaos"
 	cfg.PBlunder, cfg.PLevelBust = 0.03, 0.03
-	a, k, err := RunRecorded(cfg)
+	var rec, again bytes.Buffer
+	a, err := RunRecord(cfg, &rec, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := RunRecord(cfg, &again, testKey); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(rec.Bytes(), again.Bytes()) {
+		t.Fatal("two runs with one seed wrote different records")
+	}
 	b, _ := Run(cfg)
 	if a.Digest != b.Digest || a.ClearancesSent != b.ClearancesSent || a.Completed != b.Completed {
-		t.Fatal("two runs with one seed differ")
+		t.Fatal("a recorded run and a plain run with one seed differ")
 	}
-	d, _ := NewVerifier(cfg.Verifier)
-	if re := kernel.Replay(cfg.Kernel, d, k.Log); re.Digest() != k.Digest() {
-		t.Fatal("replay of the kernel input log reached a different state")
+
+	rep, err := record.Verify(bytes.NewReader(rec.Bytes()), trust(testKey))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !rep.OK() || !rep.ReplayDone {
+		t.Fatalf("the record does not pass: %v", rep.Failures)
+	}
+	var rejects uint64
+	for _, n := range a.Kernel.Rejects {
+		rejects += n
+	}
+	if uint64(rep.Commits) != a.Kernel.Commits || uint64(rep.Rejects) != rejects || rep.Commits == 0 || rep.Rejects == 0 {
+		t.Fatalf("record: %d commits, %d rejects; kernel: %d commits, %d rejects", rep.Commits, rep.Rejects, a.Kernel.Commits, rejects)
+	}
+	if rep.Checkpoints != 60 || rep.Tail != 0 || rep.Unsigned != 0 || rep.End != conv.Time(cfg.Duration) {
+		t.Fatalf("%d checkpoints, %d lines after the last, %d unsigned, end at %d µs", rep.Checkpoints, rep.Tail, rep.Unsigned, rep.End)
+	}
+	if hex.EncodeToString(lastState(t, rec.Bytes())) != a.Digest {
+		t.Fatal("the last checkpoint does not state the final state of the kernel")
+	}
+
 	cfg.Seed = 2
 	if c, _ := Run(cfg); c.Digest == a.Digest {
 		t.Fatal("two seeds gave one result")
 	}
-	t.Logf("%d kernel inputs replayed", len(k.Log))
+	t.Logf("%d lines, %d bytes, %d commits, %d rejects, %d checkpoints", rep.Lines, rec.Len(), rep.Commits, rep.Rejects, rep.Checkpoints)
+}
+
+func lastState(t *testing.T, rec []byte) []byte {
+	t.Helper()
+	cps, err := record.ReadCheckpoints(bytes.NewReader(rec))
+	if err != nil || len(cps) == 0 {
+		t.Fatalf("checkpoints: %d, %v", len(cps), err)
+	}
+	return cps[len(cps)-1].State[:]
+}
+
+var update = flag.Bool("update", false, "write the kernel vector of this package again")
+
+// trafficVector is a published record of half an hour of dense traffic under
+// the hostile planner: a kernel vector (conformance/README.md). An arm64
+// machine wrote it.
+const trafficVector = "../../conformance/kernel-traffic-0.2.rec.gz"
+
+func trafficVectorConfig() Config {
+	cfg := DefaultConfig()
+	cfg.Duration = 1800
+	cfg.FlightsPerHour = 240
+	cfg.Planner = "chaos"
+	cfg.PBlunder, cfg.PLevelBust = 0.05, 0.05
+	return cfg
+}
+
+// The kernel must compute the same bits on every machine (specification,
+// section 1). This machine must replay a record that another machine wrote:
+// every verdict with its conflict time, and every state digest.
+//
+// Before the rule for arithmetic, a replay of this traffic on another
+// processor type failed at the checkpoint for the fourth minute.
+func TestKernelVectorTraffic(t *testing.T) {
+	if *update {
+		var buf bytes.Buffer
+		z, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		if _, err := RunRecord(trafficVectorConfig(), z); err != nil {
+			t.Fatal(err)
+		}
+		if err := z.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(trafficVector, buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, err := os.Open(trafficVector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	z, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := record.Verify(z, record.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK() || !rep.ReplayDone {
+		t.Fatalf("this machine does not replay the vector: %v\n"+
+			"If you changed what the kernel does, on purpose, write the vector again:\n"+
+			"  go test ./internal/sim -run TestKernelVectorTraffic -update\n"+
+			"If you did not, the kernel computes other bits on this machine than on the one that wrote the vector.", rep.Failures)
+	}
+	if rep.Commits < 150 || rep.Rejects < 150 || rep.Checkpoints != 30 || rep.Tail != 0 {
+		t.Fatalf("a weak vector: %d commits, %d rejects, %d checkpoints, tail %d", rep.Commits, rep.Rejects, rep.Checkpoints, rep.Tail)
+	}
+	t.Logf("%d lines, %d commits, %d rejects", rep.Lines, rep.Commits, rep.Rejects)
+}
+
+// A kernel with a faulty Verifier writes a record that is consistent and
+// correctly signed. A replay with the public implementations finds the first
+// clearance that the kernel approved and that the specification refuses.
+func TestReplayCatchesFaultyVerifier(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Duration = 4 * 3600
+	cfg.SafetyNet = false
+	cfg.Verifier = "broken-single"
+	var rec bytes.Buffer
+	sim, err := RunRecord(cfg, &rec, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := trust(testKey)
+	rep, err := record.Verify(bytes.NewReader(rec.Bytes()), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.ReplayDone || len(rep.Failures) == 0 {
+		t.Fatal("the replay found nothing")
+	}
+	last := rep.Failures[len(rep.Failures)-1]
+	for _, f := range rep.Failures {
+		t.Log(f)
+		if f.Class != record.Replay {
+			t.Fatalf("a failure that is not of the replay: %v", f)
+		}
+	}
+	msg := last.Msg
+	if !strings.Contains(msg, `the record says "committed`) || !strings.Contains(msg, `the replay says "rejected: conflict`) {
+		t.Fatalf("the replay does not name an unsafe approval: %s", msg)
+	}
+	// Without the replay, nothing is wrong with the record.
+	opt.NoReplay = true
+	if rep, _ := record.Verify(bytes.NewReader(rec.Bytes()), opt); !rep.OK() {
+		t.Fatalf("chain and signatures: %v", rep.Failures)
+	}
+	t.Logf("%d kernel-class losses in the run: %v", sim.LossKernel, sim.LossDetail)
 }

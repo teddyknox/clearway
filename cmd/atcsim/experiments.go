@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/fx"
 	"github.com/teddyknox/clearway/internal/sim"
 )
 
@@ -49,10 +49,10 @@ var experiments = map[string][]row{
 	},
 	// How well must aircraft hold their contracts?
 	"growth": {
-		{"K = 3 kt", func(c *sim.Config) { c.Kernel.K = 3 * geom.Kt }},
-		{"K = 6 kt", func(c *sim.Config) { c.Kernel.K = 6 * geom.Kt }},
-		{"K = 10 kt", func(c *sim.Config) { c.Kernel.K = 10 * geom.Kt }},
-		{"K = 15 kt", func(c *sim.Config) { c.Kernel.K = 15 * geom.Kt }},
+		{"K = 3 kt", func(c *sim.Config) { c.Kernel.K = 3 * fx.NM / 3600 }},
+		{"K = 6 kt", func(c *sim.Config) { c.Kernel.K = 6 * fx.NM / 3600 }},
+		{"K = 10 kt", func(c *sim.Config) { c.Kernel.K = 10 * fx.NM / 3600 }},
+		{"K = 15 kt", func(c *sim.Config) { c.Kernel.K = 15 * fx.NM / 3600 }},
 	},
 	"density": {
 		{"60 flights/h", func(c *sim.Config) { c.FlightsPerHour = 60 }},

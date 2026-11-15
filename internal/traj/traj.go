@@ -1,188 +1,220 @@
-// Package traj defines 4D trajectories: a horizontal path flown at a stated
-// ground speed, and a vertical profile of level and transition segments.
+// Package traj defines the 4D trajectories of the kernel: a horizontal path
+// flown at a stated ground velocity, and a vertical profile of level and
+// transition segments.
 //
-// Units: nautical miles, feet, seconds.
+// Every value is an integer in the units of package fx: micrometres,
+// microseconds, micrometres per second. Time is a whole number of
+// microseconds, and a position at a time is an exact number of picometres
+// (specification, section 2). The package has no floating point.
 package traj
 
 import (
 	"errors"
 	"fmt"
-	"math"
-	"sort"
 
-	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/fx"
 )
 
 const (
-	timeEps = 1e-6
-	posEps  = 1e-5
-	altEps  = 1e-6
+	// Join is the largest distance, on each axis, between the end of a leg
+	// and the start of the next (µm). A planner computes a path in other
+	// units, and a velocity in whole micrometres per second cannot end a leg
+	// on an exact point.
+	Join = 18_520
+
+	// MaxParts is the largest number of legs, and of vertical segments, in
+	// one trajectory.
+	MaxParts = 256
 )
 
 // Leg is a straight horizontal segment flown at constant ground velocity.
+// It covers the times T0 to T1. At the time where one leg ends and the next
+// starts, the next leg gives the position.
 type Leg struct {
-	T0, T1 float64
-	P0     geom.Vec2
-	V      geom.Vec2 // nm/s
+	T0, T1 int64  // µs
+	P0     fx.Vec // µm
+	V      fx.Vec // µm/s
 }
 
-func (l Leg) PosAt(t float64) geom.Vec2 { return l.P0.Add(l.V.Scale(t - l.T0)) }
-func (l Leg) EndPos() geom.Vec2         { return l.PosAt(l.T1) }
-func (l Leg) Speed() float64            { return l.V.Norm() }
+// Pos returns the position on the leg at t, in picometres.
+func (l *Leg) Pos(t int64) fx.Vec { return fx.Pos(l.P0, l.V, l.T0, t) }
 
 // VSeg is a vertical segment. A0 == A1 is level flight. Otherwise the segment
 // is a transition, and the assigned band is the whole range between A0 and A1
 // for the whole duration of the segment.
 type VSeg struct {
-	T0, T1 float64
-	A0, A1 float64
+	T0, T1 int64 // µs
+	A0, A1 int64 // µm
 }
 
-func (s VSeg) Lo() float64 { return math.Min(s.A0, s.A1) }
-func (s VSeg) Hi() float64 { return math.Max(s.A0, s.A1) }
+func (s VSeg) Lo() int64   { return min(s.A0, s.A1) }
+func (s VSeg) Hi() int64   { return max(s.A0, s.A1) }
 func (s VSeg) Level() bool { return s.A0 == s.A1 }
 
 // Trajectory is immutable after construction. Legs and VSegs each cover the
-// same time span without gaps.
+// same span of time without gaps.
 type Trajectory struct {
 	Legs  []Leg
 	VSegs []VSeg
 }
 
-func (tr *Trajectory) Start() float64 { return tr.Legs[0].T0 }
-func (tr *Trajectory) End() float64   { return tr.Legs[len(tr.Legs)-1].T1 }
+func (tr *Trajectory) Start() int64 { return tr.Legs[0].T0 }
+func (tr *Trajectory) End() int64   { return tr.Legs[len(tr.Legs)-1].T1 }
 
-// Validate reports the first structural defect: an empty or reversed segment,
-// a gap in time, a jump in position or altitude, or mismatched time spans.
+func inside(limit int64, vals ...int64) bool {
+	for _, v := range vals {
+		if v < -limit || v > limit {
+			return false
+		}
+	}
+	return true
+}
+
+// Validate reports the first defect. A valid trajectory:
+//
+//   - has from 1 to MaxParts legs and from 1 to MaxParts vertical segments;
+//   - has every time, coordinate, altitude, and velocity inside the limits of
+//     package fx, and every position on every leg inside them too;
+//   - has legs that follow each other with no gap in time, each starting
+//     within Join of the end of the leg before it, on each axis;
+//   - has vertical segments that follow each other with no gap in time and no
+//     step in altitude, over exactly the span of the legs.
+//
+// The kernel computes only with valid trajectories. On a valid trajectory no
+// operation of this package or of the Verifier can overflow.
 func (tr *Trajectory) Validate() error {
 	if tr == nil || len(tr.Legs) == 0 || len(tr.VSegs) == 0 {
 		return errors.New("empty trajectory")
 	}
+	if len(tr.Legs) > MaxParts || len(tr.VSegs) > MaxParts {
+		return errors.New("too many legs or vertical segments")
+	}
+	limit := fx.Mul(fx.MaxCoord, fx.M)
+	join := int64(Join) * fx.M
+	var prevEnd [2]fx.I128
 	for i, l := range tr.Legs {
-		if !(l.T1 > l.T0) || math.IsNaN(l.P0.X+l.P0.Y+l.V.X+l.V.Y) || math.IsInf(l.T0+l.T1, 0) {
+		if l.T1 <= l.T0 || !inside(fx.MaxTime, l.T0, l.T1) || !inside(fx.MaxCoord, l.P0.X, l.P0.Y) ||
+			!inside(fx.MaxSpeed, l.V.X, l.V.Y) {
 			return fmt.Errorf("leg %d malformed", i)
 		}
-		if i > 0 {
-			p := tr.Legs[i-1]
-			if math.Abs(p.T1-l.T0) > timeEps {
-				return fmt.Errorf("leg %d time gap", i)
-			}
-			if p.EndPos().Dist(l.P0) > posEps {
-				return fmt.Errorf("leg %d position jump", i)
+		start := [2]fx.I128{fx.Mul(l.P0.X, fx.M), fx.Mul(l.P0.Y, fx.M)}
+		end := [2]fx.I128{start[0].Add(fx.Mul(l.V.X, l.T1-l.T0)), start[1].Add(fx.Mul(l.V.Y, l.T1-l.T0))}
+		for axis := range end {
+			if end[axis].Cmp(limit) > 0 || end[axis].Cmp(limit.Neg()) < 0 {
+				return fmt.Errorf("leg %d leaves the valid area", i)
 			}
 		}
+		if i > 0 {
+			if l.T0 != tr.Legs[i-1].T1 {
+				return fmt.Errorf("leg %d time gap", i)
+			}
+			for axis := range start {
+				// Both values are inside the limit, so the difference fits.
+				if d := start[axis].Sub(prevEnd[axis]).Int64(); d > join || d < -join {
+					return fmt.Errorf("leg %d position jump", i)
+				}
+			}
+		}
+		prevEnd = end
 	}
 	for i, s := range tr.VSegs {
-		if !(s.T1 > s.T0) || math.IsNaN(s.A0+s.A1) {
+		if s.T1 <= s.T0 || !inside(fx.MaxTime, s.T0, s.T1) || !inside(fx.MaxCoord, s.A0, s.A1) {
 			return fmt.Errorf("vseg %d malformed", i)
 		}
 		if i > 0 {
-			p := tr.VSegs[i-1]
-			if math.Abs(p.T1-s.T0) > timeEps {
+			if s.T0 != tr.VSegs[i-1].T1 {
 				return fmt.Errorf("vseg %d time gap", i)
 			}
-			if math.Abs(p.A1-s.A0) > altEps {
+			if s.A0 != tr.VSegs[i-1].A1 {
 				return fmt.Errorf("vseg %d altitude jump", i)
 			}
 		}
 	}
-	if math.Abs(tr.VSegs[0].T0-tr.Start()) > timeEps ||
-		math.Abs(tr.VSegs[len(tr.VSegs)-1].T1-tr.End()) > timeEps {
+	if tr.VSegs[0].T0 != tr.Start() || tr.VSegs[len(tr.VSegs)-1].T1 != tr.End() {
 		return errors.New("vertical profile does not span the legs")
 	}
 	return nil
 }
 
-// LegAt returns the leg in effect at t. Times outside the trajectory map to
-// the first or the last leg.
-func (tr *Trajectory) LegAt(t float64) *Leg {
-	i := sort.Search(len(tr.Legs), func(i int) bool { return tr.Legs[i].T1 > t })
-	if i >= len(tr.Legs) {
-		i = len(tr.Legs) - 1
+// LegAt returns the leg in effect at t: the first leg that ends after t.
+// A time at or after the end of the trajectory maps to the last leg, and a
+// time before its start to the first.
+func (tr *Trajectory) LegAt(t int64) *Leg {
+	for i := range tr.Legs {
+		if tr.Legs[i].T1 > t {
+			return &tr.Legs[i]
+		}
 	}
-	return &tr.Legs[i]
+	return &tr.Legs[len(tr.Legs)-1]
 }
 
-func (tr *Trajectory) vsegAt(t float64) *VSeg {
-	i := sort.Search(len(tr.VSegs), func(i int) bool { return tr.VSegs[i].T1 > t })
-	if i >= len(tr.VSegs) {
-		i = len(tr.VSegs) - 1
+func (tr *Trajectory) vsegAt(t int64) *VSeg {
+	for i := range tr.VSegs {
+		if tr.VSegs[i].T1 > t {
+			return &tr.VSegs[i]
+		}
 	}
-	return &tr.VSegs[i]
+	return &tr.VSegs[len(tr.VSegs)-1]
 }
 
-func (tr *Trajectory) clamp(t float64) float64 {
-	return math.Max(tr.Start(), math.Min(tr.End(), t))
-}
+func (tr *Trajectory) clamp(t int64) int64 { return max(tr.Start(), min(tr.End(), t)) }
 
-// PosAt returns the nominal position at t, clamped to the trajectory span.
-func (tr *Trajectory) PosAt(t float64) geom.Vec2 {
+// Pos returns the nominal position at t, in picometres. A time outside the
+// trajectory maps to its nearest end.
+func (tr *Trajectory) Pos(t int64) fx.Vec {
 	t = tr.clamp(t)
-	return tr.LegAt(t).PosAt(t)
+	return tr.LegAt(t).Pos(t)
 }
 
 // VelAt returns the nominal ground velocity at t.
-func (tr *Trajectory) VelAt(t float64) geom.Vec2 { return tr.LegAt(tr.clamp(t)).V }
+func (tr *Trajectory) VelAt(t int64) fx.Vec { return tr.LegAt(tr.clamp(t)).V }
 
-// AltAt returns the nominal altitude at t, linear inside a transition.
-func (tr *Trajectory) AltAt(t float64) float64 {
+// AltAt returns the nominal altitude at t: linear inside a transition, and
+// rounded down to a whole micrometre.
+func (tr *Trajectory) AltAt(t int64) int64 {
 	t = tr.clamp(t)
 	s := tr.vsegAt(t)
-	return s.A0 + (s.A1-s.A0)*(t-s.T0)/(s.T1-s.T0)
+	return altAt(s, t)
+}
+
+func altAt(s *VSeg, t int64) int64 {
+	// |A1 − A0| <= 2^42 and t − T0 <= 2^51: the quotient is inside ±2^42.
+	d, _ := fx.Mul(s.A1-s.A0, t-s.T0).DivFloor(s.T1 - s.T0)
+	return s.A0 + d
 }
 
 // VSegAt returns a copy of the vertical segment in effect at t.
-func (tr *Trajectory) VSegAt(t float64) VSeg { return *tr.vsegAt(tr.clamp(t)) }
+func (tr *Trajectory) VSegAt(t int64) VSeg { return *tr.vsegAt(tr.clamp(t)) }
 
-// BandOver returns the union of the assigned bands of all vertical segments
-// that overlap [t0, t1]. An interval outside the trajectory maps to the
-// nearest segment.
-func (tr *Trajectory) BandOver(t0, t1 float64) (lo, hi float64) {
-	lo, hi = math.Inf(1), math.Inf(-1)
-	for _, s := range tr.VSegs {
-		if s.T1 < t0 || s.T0 > t1 {
-			continue
-		}
-		lo = math.Min(lo, s.Lo())
-		hi = math.Max(hi, s.Hi())
-	}
-	if lo > hi {
-		s := tr.VSegs[0]
-		if t0 > tr.End() {
-			s = tr.VSegs[len(tr.VSegs)-1]
-		}
-		return s.Lo(), s.Hi()
-	}
-	return lo, hi
-}
-
-// MinSpeed returns the lowest ground speed of any leg.
-func (tr *Trajectory) MinSpeed() float64 {
-	m := math.Inf(1)
-	for _, l := range tr.Legs {
-		m = math.Min(m, l.Speed())
+// MinSpeed returns the lowest ground speed of any leg, rounded down.
+func (tr *Trajectory) MinSpeed() int64 {
+	m := fx.Speed(tr.Legs[0].V)
+	for _, l := range tr.Legs[1:] {
+		m = min(m, fx.Speed(l.V))
 	}
 	return m
 }
 
-// MaxSpeedOver returns the highest ground speed of any leg that overlaps
-// [t0, t1].
-func (tr *Trajectory) MaxSpeedOver(t0, t1 float64) float64 {
-	m := 0.0
+// SpeedOver returns the highest ground speed of any leg that overlaps the
+// times t0 to t1, rounded up, and the number of those legs. With no such leg
+// it returns the speed of the leg in effect at t0, and one.
+func (tr *Trajectory) SpeedOver(t0, t1 int64) (speed int64, legs int) {
 	for _, l := range tr.Legs {
 		if l.T1 < t0 || l.T0 > t1 {
 			continue
 		}
-		m = math.Max(m, l.Speed())
+		speed = max(speed, fx.SpeedUp(l.V))
+		legs++
 	}
-	if m == 0 {
-		return tr.LegAt(t0).Speed()
+	if legs == 0 {
+		return fx.SpeedUp(tr.LegAt(t0).V), 1
 	}
-	return m
+	return speed, legs
 }
 
-// Shift returns a copy with dt added to every time.
-func (tr *Trajectory) Shift(dt float64) *Trajectory {
+// Shift returns a copy with dt added to every time. The caller must validate
+// the result.
+func (tr *Trajectory) Shift(dt int64) *Trajectory {
 	out := &Trajectory{Legs: make([]Leg, len(tr.Legs)), VSegs: make([]VSeg, len(tr.VSegs))}
 	for i, l := range tr.Legs {
 		l.T0 += dt
@@ -197,14 +229,15 @@ func (tr *Trajectory) Shift(dt float64) *Trajectory {
 	return out
 }
 
-// Splice returns base up to time t followed by tail. tail must start at t.
-// The caller must make tail continuous with base in position and altitude;
-// Splice returns an error if the result is not a valid trajectory.
-func Splice(base *Trajectory, t float64, tail *Trajectory) (*Trajectory, error) {
+// Splice returns base up to time t followed by tail. t must lie strictly
+// inside base, and tail must start at t. Splice returns an error if the
+// result is not a valid trajectory: the caller makes tail continuous with
+// base in position and in altitude.
+func Splice(base *Trajectory, t int64, tail *Trajectory) (*Trajectory, error) {
 	if t <= base.Start() || t >= base.End() {
 		return nil, errors.New("splice time outside base")
 	}
-	if math.Abs(tail.Start()-t) > timeEps {
+	if tail.Start() != t {
 		return nil, errors.New("tail does not start at splice time")
 	}
 	out := &Trajectory{}
@@ -223,7 +256,7 @@ func Splice(base *Trajectory, t float64, tail *Trajectory) (*Trajectory, error) 
 			break
 		}
 		if s.T1 > t {
-			s.A1 = s.A0 + (s.A1-s.A0)*(t-s.T0)/(s.T1-s.T0)
+			s.A1 = altAt(&s, t)
 			s.T1 = t
 		}
 		out.VSegs = append(out.VSegs, s)
@@ -233,50 +266,4 @@ func Splice(base *Trajectory, t float64, tail *Trajectory) (*Trajectory, error) 
 		return nil, err
 	}
 	return out, nil
-}
-
-// Route returns contiguous legs through pts, starting at time t0, with one
-// ground speed (nm/s) per leg. Zero-length legs are skipped.
-func Route(t0 float64, pts []geom.Vec2, speeds []float64) []Leg {
-	var legs []Leg
-	t := t0
-	for i := 0; i+1 < len(pts); i++ {
-		d := pts[i+1].Sub(pts[i])
-		dist := d.Norm()
-		if dist < 1e-9 || speeds[i] <= 0 {
-			continue
-		}
-		dur := dist / speeds[i]
-		legs = append(legs, Leg{T0: t, T1: t + dur, P0: pts[i], V: d.Scale(1 / dur)})
-		t += dur
-	}
-	return legs
-}
-
-// Level returns a level profile at alt over [t0, t1].
-func Level(t0, t1, alt float64) []VSeg { return []VSeg{{T0: t0, T1: t1, A0: alt, A1: alt}} }
-
-// Step returns a profile over [t0, t1]: level at a0, then a transition to a1
-// that starts at ts and proceeds at rate (ft/s), then level at a1. The
-// transition is truncated at t1 if it does not fit.
-func Step(t0, t1, a0, ts, a1, rate float64) []VSeg {
-	if a0 == a1 || rate <= 0 {
-		return Level(t0, t1, a0)
-	}
-	if ts < t0 {
-		ts = t0
-	}
-	if ts >= t1 {
-		return Level(t0, t1, a0)
-	}
-	te := ts + math.Abs(a1-a0)/rate
-	var out []VSeg
-	if ts > t0 {
-		out = append(out, VSeg{T0: t0, T1: ts, A0: a0, A1: a0})
-	}
-	if te >= t1 {
-		return append(out, VSeg{T0: ts, T1: t1, A0: a0, A1: a1})
-	}
-	out = append(out, VSeg{T0: ts, T1: te, A0: a0, A1: a1})
-	return append(out, VSeg{T0: te, T1: t1, A0: a1, A1: a1})
 }

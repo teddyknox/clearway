@@ -5,45 +5,59 @@ import (
 	"math/rand/v2"
 	"testing"
 
+	"github.com/teddyknox/clearway/internal/conv"
+	"github.com/teddyknox/clearway/internal/ftraj"
+	"github.com/teddyknox/clearway/internal/fx"
 	"github.com/teddyknox/clearway/internal/geom"
 	"github.com/teddyknox/clearway/internal/traj"
 )
 
+// The tests build trajectories in nautical miles, feet, and seconds, and
+// convert them once, as a planner does.
 const cruise = 480 * geom.Kt
 
 func newTestKernel() *Kernel {
-	return New(DefaultParams(), &Dual{A: AnalyticChecker{}, B: SampledChecker{Step: 1}, Tol: 0.75, TimeTol: 1})
+	d, err := Arrangement("dual")
+	if err != nil {
+		panic(err)
+	}
+	return New(DefaultParams(), d)
 }
 
-// straight returns a level trajectory from a to b that starts at t0.
+// straight returns a level trajectory from a to b (nm) that starts at t0 (s),
+// at alt (ft).
 func straight(t0 float64, a, b geom.Vec2, alt float64) *traj.Trajectory {
-	legs := traj.Route(t0, []geom.Vec2{a, b}, []float64{cruise})
-	return &traj.Trajectory{Legs: legs, VSegs: traj.Level(t0, legs[0].T1, alt)}
+	legs := ftraj.Route(t0, []geom.Vec2{a, b}, []float64{cruise})
+	return conv.Traj(&ftraj.Trajectory{Legs: legs, VSegs: ftraj.Level(t0, legs[0].T1, alt)})
 }
 
 // tailVia returns a tail for the active contract of f: from its position at
 // td, through via (if not nil), to end, level at alt0 or stepping to alt1.
 func tailVia(f *Flight, td float64, via *geom.Vec2, end geom.Vec2, alt0, alt1 float64) *traj.Trajectory {
-	pts := []geom.Vec2{f.Active.Traj.PosAt(td)}
+	pts := []geom.Vec2{conv.PM(f.Active.Traj.Pos(sec(td)))}
 	speeds := []float64{cruise}
 	if via != nil {
 		pts = append(pts, *via)
 		speeds = append(speeds, cruise)
 	}
 	pts = append(pts, end)
-	legs := traj.Route(td, pts, speeds)
+	legs := ftraj.Route(td, pts, speeds)
 	t1 := legs[len(legs)-1].T1
-	return &traj.Trajectory{Legs: legs, VSegs: traj.Step(td, t1, alt0, td, alt1, 1000.0/60)}
+	return conv.Traj(&ftraj.Trajectory{Legs: legs, VSegs: ftraj.Step(td, t1, alt0, td, alt1, 1000.0/60)})
 }
 
+// trackOn returns a track of an aircraft that is exactly on tr at t (s).
 func trackOn(tr *traj.Trajectory, t float64) Track {
-	return Track{T: t, Pos: tr.PosAt(t), Vel: tr.VelAt(t), Alt: tr.AltAt(t), SelAlt: math.NaN()}
+	at := tr.Pos(sec(t))
+	x, _ := fx.Int(at.X + fx.M/2).DivFloor(fx.M)
+	y, _ := fx.Int(at.Y + fx.M/2).DivFloor(fx.M)
+	return Track{T: sec(t), Pos: fx.Vec{X: x, Y: y}, Vel: tr.VelAt(sec(t)), Alt: tr.AltAt(sec(t))}
 }
 
 func mustAdmit(t *testing.T, k *Kernel, id FlightID, tr *traj.Trajectory) {
 	t.Helper()
 	if v := k.Admit(id, tr); !v.OK {
-		t.Fatalf("admit %d rejected: %s with %d at %.0f", id, v.Reason, v.With, v.At)
+		t.Fatalf("admit %d rejected: %s with %d at %d", id, v.Reason, v.With, v.At)
 	}
 }
 
@@ -77,10 +91,10 @@ func TestWindowAndPredictedConflict(t *testing.T) {
 		t.Fatalf("conflicts: %+v", cs)
 	}
 	if cs[0].T < k.P.CommitHorizon || cs[0].T > k.P.Horizon {
-		t.Fatalf("conflict at %.0f s, want between commit horizon and horizon", cs[0].T)
+		t.Fatalf("conflict at %d µs, want between commit horizon and horizon", cs[0].T)
 	}
-	if got := k.Coast(); math.Abs(got-cs[0].T) > 1e-9 {
-		t.Fatalf("coast %.0f, conflict at %.0f", got, cs[0].T)
+	if got := k.Coast(); got != cs[0].T {
+		t.Fatalf("coast %d, conflict at %d", got, cs[0].T)
 	}
 	if k.PairState(1, 2) != PairVerified {
 		t.Fatal("pair should be verified until the conflict time")
@@ -206,9 +220,10 @@ func TestProposalRules(t *testing.T) {
 	k.Ack(1)
 	// The flight is now in a climb from 150 s to 270 s. A divergence point
 	// inside the transition is not allowed.
-	k.Advance(60)
+	k.Advance(sec(60))
 	f = k.Flight(1)
-	tail := tailVia(f, 200, nil, east, f.Active.Traj.AltAt(200), f.Active.Traj.AltAt(200))
+	mid := conv.Ft(f.Active.Traj.AltAt(sec(200)))
+	tail := tailVia(f, 200, nil, east, mid, mid)
 	if v := k.Propose(1, tail, Human); v.Reason != RejVertical {
 		t.Errorf("divergence inside a transition: %s", v.Reason)
 	}
@@ -220,16 +235,16 @@ func TestMonitorMarksIntruder(t *testing.T) {
 	mustAdmit(t, k, 1, tr1)
 	mustAdmit(t, k, 2, straight(0, geom.Vec2{X: -160, Y: 20}, geom.Vec2{X: 160, Y: 20}, 35000))
 
-	k.Advance(100)
+	k.Advance(sec(100))
 	k.UpdateTrack(1, trackOn(tr1, 100))
 	if k.Flight(1).Intruder {
 		t.Fatal("conforming track marked as intruder")
 	}
 	// Two miles off the path, turning toward flight 2.
 	tk := trackOn(tr1, 105)
-	tk.Pos.Y += 2
-	tk.Vel = tk.Vel.Rotate(0.5)
-	k.Advance(105)
+	tk.Pos.Y += nm(2)
+	tk.Vel = conv.Vel(conv.NMVel(tk.Vel).Rotate(0.5))
+	k.Advance(sec(105))
 	k.UpdateTrack(1, tk)
 	f := k.Flight(1)
 	if !f.Intruder || f.Active != nil || f.ITube == nil {
@@ -250,8 +265,8 @@ func TestMonitorMarksIntruder(t *testing.T) {
 	k2 := newTestKernel()
 	mustAdmit(t, k2, 1, tr1)
 	tk = trackOn(tr1, 100)
-	tk.Alt += 300
-	k2.Advance(100)
+	tk.Alt += ft(300)
+	k2.Advance(sec(100))
 	k2.UpdateTrack(1, tk)
 	if !k2.Flight(1).Intruder || k2.Stats.Exits[ExitVertical] != 1 {
 		t.Fatal("level bust not detected")
@@ -260,8 +275,8 @@ func TestMonitorMarksIntruder(t *testing.T) {
 	k3 := newTestKernel()
 	mustAdmit(t, k3, 1, tr1)
 	tk = trackOn(tr1, 100)
-	tk.SelAlt = 36000
-	k3.Advance(100)
+	tk.HasSel, tk.SelAlt = true, ft(36000)
+	k3.Advance(sec(100))
 	k3.UpdateTrack(1, tk)
 	if !k3.Flight(1).Intruder || k3.Stats.Exits[ExitIntent] != 1 {
 		t.Fatal("selected-altitude mismatch not detected")
@@ -289,7 +304,7 @@ func TestUnknownIsSettledByTheMonitor(t *testing.T) {
 			flown = newTr
 		}
 		for now := 5.0; now <= 400; now += 5 {
-			k.Advance(now)
+			k.Advance(sec(now))
 			k.UpdateTrack(1, trackOn(flown, now))
 			if k.Flight(1).PState == PendingNone {
 				break
@@ -312,24 +327,32 @@ func TestReanchor(t *testing.T) {
 	k := newTestKernel()
 	tr := straight(0, west, east, 35000)
 	mustAdmit(t, k, 1, tr)
-	k.Advance(600)
-	if got := k.Flight(1).Active.Radius(600); math.Abs(got-(1.2+600*10*geom.Kt)) > 1e-9 {
-		t.Fatalf("radius before re-anchor: %.3f", got)
+	now := sec(600)
+	k.Advance(now)
+	want := fx.Mul(k.P.BaseR0(), fx.M).Add(fx.Mul(k.P.K, now))
+	if got := k.Flight(1).Active.RadiusPM(now); got != want {
+		t.Fatalf("radius before re-anchor: %v pm, want %v", got, want)
 	}
 	// The aircraft is 1 nm ahead of its nominal position.
 	tk := trackOn(tr, 600)
-	tk.Pos.X += 1
+	tk.Pos.X += nm(1)
 	k.UpdateTrack(1, tk)
 	done := k.ReanchorAll()
-	if len(done) != 1 || math.Abs(done[0].Dt-1/cruise) > 1e-6 {
-		t.Fatalf("re-anchor: %+v", done)
+	if len(done) != 1 || fx.Abs(done[0].Dt-sec(1/cruise)) > 10 {
+		t.Fatalf("re-anchor: %+v, want a shift of about %d µs", done, sec(1/cruise))
 	}
 	act := k.Flight(1).Active
-	if act.Traj.PosAt(600).Dist(tk.Pos) > 1e-6 {
-		t.Fatal("nominal position does not match the track")
+	// The nominal position matches the track to the distance flown in one
+	// microsecond, and the path is exactly the old one.
+	at := act.Traj.Pos(now)
+	if fx.Abs(at.X-tk.Pos.X*fx.M) > 300*fx.M || at.Y != tk.Pos.Y*fx.M {
+		t.Fatalf("nominal position %v pm does not match the track %v µm", at, tk.Pos)
 	}
-	if act.Radius(600) != k.P.BaseR0() {
-		t.Fatalf("radius after re-anchor: %.3f", act.Radius(600))
+	if l, was := act.Traj.Legs[0], tr.Legs[0]; l.P0 != was.P0 || l.V != was.V || l.T0 != was.T0-done[0].Dt || l.T1 != was.T1-done[0].Dt {
+		t.Fatalf("the re-anchor changed the path: %+v, was %+v", l, was)
+	}
+	if got := act.RadiusPM(now); got != fx.Mul(k.P.BaseR0(), fx.M) {
+		t.Fatalf("radius after re-anchor: %v pm", got)
 	}
 }
 
@@ -337,18 +360,18 @@ func TestRecontractIntruder(t *testing.T) {
 	k := newTestKernel()
 	tr := straight(0, west, east, 35000)
 	mustAdmit(t, k, 1, tr)
-	k.Advance(100)
+	k.Advance(sec(100))
 	tk := trackOn(tr, 100)
-	tk.Pos.Y += 3
+	tk.Pos.Y += nm(3)
 	k.UpdateTrack(1, tk)
 	if !k.Flight(1).Intruder {
 		t.Fatal("expected intruder")
 	}
-	if v := k.Propose(1, straight(250, tk.Pos, east, 35000), Automation); v.Reason != RejIntruder {
+	if v := k.Propose(1, straight(250, conv.NMPoint(tk.Pos), east, 35000), Automation); v.Reason != RejIntruder {
 		t.Fatalf("amendment for an intruder: %s", v.Reason)
 	}
 	ts := 250.0
-	start := tk.Pos.Add(tk.Vel.Scale(ts - tk.T))
+	start := conv.NMPoint(tk.Pos).Add(conv.NMVel(tk.Vel).Scale(ts - 100))
 	if v := k.ProposeRecontract(1, straight(ts, start.Add(geom.Vec2{Y: 5}), east, 35000), Automation); v.Reason != RejMalformed {
 		t.Fatalf("re-contract from the wrong place: %s", v.Reason)
 	}
@@ -360,7 +383,7 @@ func TestRecontractIntruder(t *testing.T) {
 	if !k.Flight(1).Intruder {
 		t.Fatal("still an intruder until the Monitor sees it conform")
 	}
-	k.Advance(255)
+	k.Advance(sec(255))
 	k.UpdateTrack(1, trackOn(re, 255))
 	f := k.Flight(1)
 	if f.Intruder || f.ITube != nil || f.Active == nil || k.Stats.RecontractOK != 1 {
@@ -368,8 +391,9 @@ func TestRecontractIntruder(t *testing.T) {
 	}
 }
 
-// truthSeparated checks I2 with the brute-force oracle: every pair of contract
-// tubes is separated from now to the end of its verified window.
+// checkI2 checks I2 with the oracle: every pair of contract tubes is separated
+// at every scanned time from now to the last microsecond before the end of its
+// verified window. The check is exact: it has no tolerance.
 func checkI2(t *testing.T, k *Kernel) {
 	t.Helper()
 	var tubes []*Tube
@@ -388,9 +412,9 @@ func checkI2(t *testing.T, k *Kernel) {
 			if u <= k.now {
 				continue
 			}
-			if c, at, m := oracle(a, b, k.now, u-0.5, k.sep(), 0.25); c && m < -0.1 {
-				t.Fatalf("I2 violated: flights %d and %d at %.1f, margin %.3f, window to %.1f, now %.1f",
-					a.Flight, b.Flight, at, m, u, k.now)
+			if c, at := oracle(a, b, k.now, u-1, k.sep(), 250_000); c {
+				t.Fatalf("I2 violated: flights %d and %d are not separated at %d, window to %d, now %d",
+					a.Flight, b.Flight, at, u, k.now)
 			}
 		}
 	}
@@ -402,24 +426,25 @@ func checkI2(t *testing.T, k *Kernel) {
 func TestRandomProposalsKeepInvariants(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 11))
 	k := newTestKernel()
-	k.Record = true
+	log := &memLog{}
+	k.Rec = log
 	levels := []float64{34000, 35000, 36000}
 	rim := func() geom.Vec2 { return geom.Polar(160, r.Float64()*2*math.Pi) }
 	next := FlightID(1)
 	var commits, rejects int
 	for now := 0.0; now < 3600; now += 10 {
-		k.Advance(now)
+		k.Advance(sec(now))
 		// Tracks: every flight follows its active contract exactly.
 		for _, id := range append([]FlightID(nil), k.IDs()...) {
 			f := k.Flight(id)
 			if f.Active == nil {
 				continue
 			}
-			if now >= f.Active.End() {
+			if sec(now) >= f.Active.End() {
 				k.Remove(id)
 				continue
 			}
-			if now >= f.Active.Start() {
+			if sec(now) >= f.Active.Start() {
 				k.UpdateTrack(id, trackOn(f.Active.Traj, now))
 			}
 		}
@@ -444,10 +469,10 @@ func TestRandomProposalsKeepInvariants(t *testing.T) {
 				continue
 			}
 			td := now + 120 + r.Float64()*120
-			if td >= f.Active.End()-60 {
+			if sec(td) >= f.Active.End()-sec(60) {
 				continue
 			}
-			alt := f.Active.Traj.AltAt(td)
+			alt := conv.Ft(f.Active.Traj.AltAt(sec(td)))
 			via := geom.Polar(r.Float64()*120, r.Float64()*2*math.Pi)
 			end := rim()
 			if r.Float64() < 0.1 {
@@ -469,7 +494,7 @@ func TestRandomProposalsKeepInvariants(t *testing.T) {
 		}
 		// Settle old pending amendments.
 		for _, id := range k.IDs() {
-			if f := k.Flight(id); f.Pending != nil && now > f.Pending.DivergeAt-30 {
+			if f := k.Flight(id); f.Pending != nil && sec(now) > f.Pending.DivergeAt-sec(30) {
 				k.Refuse(id)
 			}
 		}
@@ -498,8 +523,129 @@ func TestRandomProposalsKeepInvariants(t *testing.T) {
 	t.Logf("%d commits, %d rejects (%v), %d marginal disagreements, %d reanchors",
 		commits, rejects, k.Stats.Rejects, k.D.Marginal, k.Stats.ReanchorOK)
 
-	re := Replay(k.P, &Dual{A: AnalyticChecker{}, B: SampledChecker{Step: 1}, Tol: 0.75, TimeTol: 1}, k.Log)
-	if re.Digest() != k.Digest() {
+	// Replay: a new kernel that applies the recorded inputs must return the
+	// same verdicts and reach the same state.
+	d, err := Arrangement("dual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := New(k.P, d)
+	answered := 0
+	for i, in := range log.inputs {
+		v, has := re.Apply(in)
+		if has != in.Kind.HasVerdict() {
+			t.Fatalf("input %d of kind %d: verdict %v", i, in.Kind, has)
+		}
+		if !has {
+			continue
+		}
+		want := log.verdicts[answered]
+		answered++
+		if v.OK != want.OK || v.Reason != want.Reason || v.With != want.With || v.At != want.At ||
+			(v.OK && v.Contract.ID != want.Contract.ID) {
+			t.Fatalf("input %d: the replay returned %+v, the kernel returned %+v", i, v, want)
+		}
+	}
+	if answered != len(log.verdicts) || answered != commits+rejects {
+		t.Fatalf("%d verdicts recorded, %d replayed, %d proposals made", len(log.verdicts), answered, commits+rejects)
+	}
+	if re.StateDigest() != k.StateDigest() {
 		t.Fatal("replay reached a different state")
+	}
+}
+
+// memLog keeps the inputs and the verdicts of a kernel in memory.
+type memLog struct {
+	inputs   []Input
+	verdicts []Verdict
+}
+
+func (m *memLog) Input(in Input)    { m.inputs = append(m.inputs, in) }
+func (m *memLog) Verdict(v Verdict) { m.verdicts = append(m.verdicts, v) }
+
+// The state digest must change when any part of the Store changes, and must
+// not change when nothing does.
+func TestStateDigestCoversTheStore(t *testing.T) {
+	build := func() *Kernel {
+		k := newTestKernel()
+		k.Advance(0)
+		k.Admit(1, straight(0, geom.Vec2{X: -160}, geom.Vec2{X: 160}, 35000))
+		k.Admit(2, straight(0, geom.Vec2{Y: -160}, geom.Vec2{Y: 160}, 36000))
+		k.Advance(sec(60))
+		for _, id := range k.IDs() {
+			k.UpdateTrack(id, trackOn(k.Flight(id).Active.Traj, 60))
+		}
+		k.Tick()
+		return k
+	}
+	base := build().StateDigest()
+	if build().StateDigest() != base {
+		t.Fatal("two kernels with the same inputs have different digests")
+	}
+	changes := map[string]func(k *Kernel){
+		"the clock": func(k *Kernel) { k.Advance(sec(61)) },
+		"a track":   func(k *Kernel) { tk := trackOn(k.Flight(1).Active.Traj, 60); tk.VRate = 1; k.UpdateTrack(1, tk) },
+		"a selected altitude": func(k *Kernel) {
+			tk := trackOn(k.Flight(1).Active.Traj, 60)
+			tk.HasSel, tk.SelAlt = true, ft(35000)
+			k.UpdateTrack(1, tk)
+		},
+		"an authority":         func(k *Kernel) { k.SetAuthority(2, Human) },
+		"an intruder":          func(k *Kernel) { k.MarkIntruder(2) },
+		"a re-anchor":          func(k *Kernel) { k.ReanchorAll() },
+		"a removed flight":     func(k *Kernel) { k.Remove(2) },
+		"a new flight":         func(k *Kernel) { k.Admit(3, straight(60, geom.Vec2{X: 160}, geom.Vec2{X: -160}, 37000)) },
+		"a rejected admission": nil, // must not change the Store
+	}
+	seen := map[[32]byte]string{}
+	for name, change := range changes {
+		k := build()
+		if change == nil {
+			if v := k.Admit(1, straight(60, geom.Vec2{X: 160}, geom.Vec2{X: -160}, 37000)); v.OK {
+				t.Fatal("a duplicate admission was committed")
+			}
+			if k.StateDigest() != base {
+				t.Errorf("%s changed the digest", name)
+			}
+			continue
+		}
+		change(k)
+		d := k.StateDigest()
+		if d == base {
+			t.Errorf("%s did not change the digest", name)
+		}
+		if other, dup := seen[d]; dup {
+			t.Errorf("%s and %s give the same digest", name, other)
+		}
+		seen[d] = name
+	}
+}
+
+// A contract with almost no ground speed turns a small offset into a shift of
+// years. The re-anchor must leave such a contract as it is: the result would
+// not cover the current time. In floating point this case once produced a
+// trajectory whose times were not numbers, and the Verifier did not return.
+func TestReanchorKeepsContractWhenShiftIsAbsurd(t *testing.T) {
+	k := newTestKernel()
+	slow := &traj.Trajectory{
+		Legs:  []traj.Leg{{T0: 0, T1: sec(5000), P0: fx.Vec{X: nm(200)}, V: fx.Vec{X: 1, Y: 1}}},
+		VSegs: []traj.VSeg{{T0: 0, T1: sec(5000), A0: ft(35000), A1: ft(35000)}},
+	}
+	mustAdmit(t, k, 1, slow)
+	mustAdmit(t, k, 2, straight(0, geom.Vec2{X: -160}, geom.Vec2{X: 160}, 36000))
+	k.Advance(sec(60))
+	// One metre ahead, at 1.4 µm/s, is eight days ahead.
+	k.UpdateTrack(1, Track{T: sec(60), Pos: fx.Vec{X: nm(200) + 1_000_000}, Vel: fx.Vec{X: 1, Y: 1}, Alt: ft(35000)})
+	k.UpdateTrack(2, trackOn(k.Flight(2).Active.Traj, 60))
+	if k.Flight(1).Intruder {
+		t.Fatal("the slow flight is one metre from its place and was marked as an intruder")
+	}
+	before := k.Flight(1).Active
+	done := k.ReanchorAll()
+	if k.Flight(1).Active != before {
+		t.Fatalf("the contract was replaced: %+v", k.Flight(1).Active.Traj.Legs)
+	}
+	if len(done) != 1 || done[0].ID != 2 {
+		t.Fatalf("re-anchored %+v, want flight 2 alone", done)
 	}
 }

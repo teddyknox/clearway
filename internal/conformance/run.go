@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/teddyknox/clearway/internal/fx"
 	"github.com/teddyknox/clearway/internal/kernel"
 )
 
@@ -18,21 +19,27 @@ type Verifier interface {
 	Check(c *Case) (Answer, error)
 }
 
-// Builtin wraps one of this module's implementations.
+// Builtin wraps one of this module's implementations. It returns an error
+// for a case with a tube or a standard that is not valid.
 type Builtin struct{ Checker kernel.PairChecker }
 
 func (b Builtin) Check(c *Case) (Answer, error) {
-	r := b.Checker.FirstConflict(c.A.Kernel(1), c.B.Kernel(2), c.From, c.To, c.Sep.params())
+	ka, kb, sp, err := c.kernel()
+	if err != nil {
+		return Answer{}, err
+	}
+	r := b.Checker.FirstConflict(ka, kb, c.From, c.To, sp)
 	return Answer{ID: c.ID, Conflict: r.Conflict, T: r.T}, nil
 }
 
 // BuiltinByName returns the implementation called "analytic" or "sampled".
+// The step of "sampled" is one second, as in the kernel.
 func BuiltinByName(name string) (Verifier, error) {
 	switch name {
 	case "analytic":
 		return Builtin{kernel.AnalyticChecker{}}, nil
 	case "sampled":
-		return Builtin{kernel.SampledChecker{Step: 1}}, nil
+		return Builtin{kernel.SampledChecker{Step: fx.Sec}}, nil
 	}
 	return nil, fmt.Errorf("no built-in Verifier called %q", name)
 }
@@ -40,21 +47,29 @@ func BuiltinByName(name string) (Verifier, error) {
 // request is what the runner sends to an outside Verifier: a case without
 // its expected answer.
 type request struct {
-	ID   string  `json:"id"`
-	A    Tube    `json:"a"`
-	B    Tube    `json:"b"`
-	From float64 `json:"from"`
-	To   float64 `json:"to"`
-	Sep  Sep     `json:"sep"`
+	ID   string `json:"id"`
+	A    Tube   `json:"a"`
+	B    Tube   `json:"b"`
+	From int64  `json:"from"`
+	To   int64  `json:"to"`
+	Sep  Sep    `json:"sep"`
+}
+
+// reply is what an outside Verifier sends back.
+type reply struct {
+	ID       string          `json:"id"`
+	Conflict bool            `json:"conflict"`
+	T        json.RawMessage `json:"t"`
 }
 
 // External is a Verifier in another process, in any language.
 //
 // Protocol: the runner writes one case as one line of JSON to the process's
 // standard input. The process writes one answer as one line of JSON to its
-// standard output: {"id": ..., "conflict": true or false, "t": seconds}. It
-// must flush after each line. "t" is read only when "conflict" is true. The
-// process should exit when its input ends.
+// standard output: {"id": ..., "conflict": true or false, "t": microseconds}.
+// It must flush after each line. "t" is read only when "conflict" is true,
+// and it must then be an integer. The process should exit when its input
+// ends.
 type External struct {
 	cmd *exec.Cmd
 	in  io.WriteCloser
@@ -90,16 +105,30 @@ func (e *External) Check(c *Case) (Answer, error) {
 	if _, err := e.in.Write(append(line, '\n')); err != nil {
 		return Answer{}, fmt.Errorf("write to Verifier: %w", err)
 	}
-	reply, err := e.out.ReadBytes('\n')
+	text, err := e.out.ReadBytes('\n')
 	if err != nil {
 		return Answer{}, fmt.Errorf("read from Verifier: %w", err)
 	}
-	var a Answer
-	if err := json.Unmarshal(reply, &a); err != nil {
-		return Answer{}, fmt.Errorf("answer is not JSON: %q", reply)
+	return decodeAnswer(text, c.ID)
+}
+
+// decodeAnswer reads one line from an outside Verifier as the answer for the
+// case id.
+func decodeAnswer(text []byte, id string) (Answer, error) {
+	var r reply
+	if err := json.Unmarshal(text, &r); err != nil {
+		return Answer{}, fmt.Errorf("answer is not JSON: %q", text)
 	}
-	if a.ID != c.ID {
-		return Answer{}, fmt.Errorf("answer is for %q, case is %q", a.ID, c.ID)
+	if r.ID != id {
+		return Answer{}, fmt.Errorf("answer is for %q, case is %q", r.ID, id)
+	}
+	a := Answer{ID: r.ID, Conflict: r.Conflict}
+	if r.Conflict {
+		// A time is a whole number of microseconds. An answer with a
+		// fraction, an exponent, or no time cannot be judged.
+		if err := json.Unmarshal(r.T, &a.T); err != nil || string(r.T) == "null" {
+			return Answer{}, fmt.Errorf("conflict time %q is not an integer", r.T)
+		}
 	}
 	return a, nil
 }

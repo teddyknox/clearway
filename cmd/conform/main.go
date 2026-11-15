@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	suitePath := flag.String("suite", "conformance/verifier-0.1.json", "the suite of vectors")
+	suitePath := flag.String("suite", "conformance/verifier-0.2.json", "the suite of vectors")
 	builtin := flag.String("builtin", "", "run a built-in implementation: analytic or sampled")
 	execCmd := flag.String("exec", "", "run an outside implementation: the command and its arguments")
 	generate := flag.Bool("generate", false, "rebuild the suite and write it to -suite")

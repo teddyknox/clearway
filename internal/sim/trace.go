@@ -5,6 +5,9 @@ import (
 	"math"
 	"strings"
 
+	"github.com/teddyknox/clearway/internal/conv"
+	"github.com/teddyknox/clearway/internal/ftraj"
+	"github.com/teddyknox/clearway/internal/fx"
 	"github.com/teddyknox/clearway/internal/geom"
 	"github.com/teddyknox/clearway/internal/kernel"
 	"github.com/teddyknox/clearway/internal/traj"
@@ -136,16 +139,17 @@ func Trace(cfg Config) (*Recording, *Report, error) {
 		byKey: map[string]int{},
 		prev:  map[kernel.FlightID]prevState{},
 		rec: &Recording{Meta: TraceMeta{
-			Seed: cfg.Seed, Duration: cfg.Duration, FrameEvery: 5, Radius: p.CellRadius,
-			Sh: p.Sh, SvTrue: p.SvTrue(), K: p.K, IntruderK: p.IntruderK, IntruderHorizon: p.IntruderHorizon,
-			Horizon: p.Horizon, NetLookAhead: w.net.P.LookAhead,
+			Seed: cfg.Seed, Duration: cfg.Duration, FrameEvery: 5, Radius: conv.NM(p.CellRadius),
+			Sh: conv.NM(p.Sh), SvTrue: conv.Ft(p.SvTrue()), K: conv.NMps(p.K), IntruderK: conv.NMps(p.IntruderK),
+			IntruderHorizon: conv.Sec(p.IntruderHorizon),
+			Horizon:         conv.Sec(p.Horizon), NetLookAhead: w.net.P.LookAhead,
 			Planner: cfg.Planner, Verifier: cfg.Verifier, Fallback: cfg.Fallback, SafetyNet: cfg.SafetyNet,
 			Rate: cfg.FlightsPerHour, Scripted: len(cfg.Scripted) > 0,
 			Counters: counters, Aircraft: aircraftColumns,
 		}},
 	}
 	w.tr = r
-	w.env.OnPropose = func(id kernel.FlightID, tr *traj.Trajectory, source string, v kernel.Verdict) {
+	w.env.OnPropose = func(id kernel.FlightID, tr *ftraj.Trajectory, source string, v kernel.Verdict) {
 		e := TraceEvent{T: w.now, Kind: "propose", A: int(id), Src: source, OK: v.OK, Pts: polyline(tr)}
 		e.Alt = tr.VSegs[len(tr.VSegs)-1].A1
 		if !v.OK {
@@ -153,7 +157,7 @@ func Trace(cfg Config) (*Recording, *Report, error) {
 		}
 		r.event(e)
 	}
-	w.k.D.OnHard = func(a, b *kernel.Tube, _, _ float64, _, _ kernel.Result) {
+	w.k.D.OnHard = func(a, b *kernel.Tube, _, _ int64, _, _ kernel.Result) {
 		// A faulty implementation can raise thousands of alarms. The counter
 		// in each frame has them all; the event list keeps the first ones.
 		if r.alarms++; r.alarms <= 400 {
@@ -165,7 +169,7 @@ func Trace(cfg Config) (*Recording, *Report, error) {
 	return r.rec, &w.rep, nil
 }
 
-func polyline(tr *traj.Trajectory) [][2]float64 {
+func polyline(tr *ftraj.Trajectory) [][2]float64 {
 	pts := make([][2]float64, 0, len(tr.Legs)+1)
 	p0 := tr.Legs[0].P0
 	pts = append(pts, [2]float64{r2(p0.X), r2(p0.Y)})
@@ -200,10 +204,11 @@ func (r *recorder) path(tr *traj.Trajectory) float64 {
 	if i, ok := r.byPtr[tr]; ok {
 		return float64(i)
 	}
-	p := TracePath{Points: polyline(tr)}
-	for _, s := range tr.VSegs {
+	fl := conv.Float(tr)
+	p := TracePath{Points: polyline(fl)}
+	for _, s := range fl.VSegs {
 		if !s.Level() {
-			at := tr.PosAt(s.T0)
+			at := fl.PosAt(s.T0)
 			p.Steps = append(p.Steps, [4]float64{r2(at.X), r2(at.Y), s.A0, s.A1})
 		}
 	}
@@ -245,7 +250,7 @@ func (r *recorder) frame(w *world) {
 
 	next := make(map[kernel.FlightID]prevState, len(w.order))
 	fr := TraceFrame{T: w.now, Coast: -1, Aircraft: [][]float64{}}
-	R := w.cfg.Kernel.CellRadius
+	R := conv.NM(w.cfg.Kernel.CellRadius)
 	inCell := 0
 	for _, id := range w.order {
 		ac, f := w.ac[id], k.Flight(id)
@@ -271,7 +276,7 @@ func (r *recorder) frame(w *world) {
 		path, pending := -1.0, -1.0
 		switch {
 		case f.Intruder:
-			state, radius = stIntruder, w.cfg.Kernel.IntruderR0
+			state, radius = stIntruder, conv.NM(w.cfg.Kernel.IntruderR0)
 		case f.PState == kernel.PendingUnknown:
 			state = stUnknown
 		case f.PState == kernel.PendingAwaiting:
@@ -280,7 +285,8 @@ func (r *recorder) frame(w *world) {
 		if f.Active != nil {
 			path = r.path(f.Active.Traj)
 			if !f.Intruder {
-				radius = f.Active.Radius(w.now)
+				// The radius is below 2^53 pm here, so the conversion is exact.
+				radius = float64(f.Active.RadiusPM(k.Now()).Int64()) / (fx.NM * fx.M)
 			}
 		}
 		if f.Pending != nil {
@@ -316,13 +322,13 @@ func (r *recorder) frame(w *world) {
 		if fa == nil || fb == nil || fa.Active == nil {
 			continue
 		}
-		pa := fa.Active.Traj.PosAt(c.T)
+		pa := conv.PM(fa.Active.Traj.Pos(c.T))
 		var pb geom.Vec2
 		switch {
 		case c.Intruder && fb.ITube != nil:
-			pb = fb.ITube.Traj.PosAt(c.T)
+			pb = conv.PM(fb.ITube.Traj.Pos(c.T))
 		case !c.Intruder && fb.Active != nil:
-			pb = fb.Active.Traj.PosAt(c.T)
+			pb = conv.PM(fb.Active.Traj.Pos(c.T))
 		default:
 			continue
 		}
@@ -331,10 +337,10 @@ func (r *recorder) frame(w *world) {
 		if c.Intruder {
 			intr = 1
 		}
-		fr.Conflicts = append(fr.Conflicts, []float64{float64(c.A), float64(c.B), r2(c.T), intr, r2(mid.X), r2(mid.Y)})
+		fr.Conflicts = append(fr.Conflicts, []float64{float64(c.A), float64(c.B), r2(conv.Sec(c.T)), intr, r2(mid.X), r2(mid.Y)})
 	}
 	fr.Alerts, r.alerts = r.alerts, nil
-	if c := k.Coast(); !math.IsInf(c, 1) {
+	if c := conv.Sec(k.Coast()); !math.IsInf(c, 1) {
 		fr.Coast = math.Round(c)
 	}
 

@@ -1,6 +1,17 @@
 package kernel
 
-import "math"
+import (
+	"fmt"
+
+	"github.com/teddyknox/clearway/internal/fx"
+)
+
+// The tolerance of the specification, section 8: how far a conservative
+// implementation may be from the exact answer.
+const (
+	Tol     = 3 * fx.NM / 4 // µm
+	TimeTol = fx.Sec        // µs
+)
 
 // Dual runs two independent checkers and approves only if both approve.
 //
@@ -17,19 +28,29 @@ import "math"
 // Dual rejects in both cases and counts them separately.
 type Dual struct {
 	A, B    PairChecker // B may be nil: single-implementation mode
-	Tol     float64     // nm
-	TimeTol float64     // s
+	Tol     int64       // µm
+	TimeTol int64       // µs
 
 	Marginal uint64
 	Hard     uint64
 
 	// OnHard, if set, receives each hard disagreement. An operational system
 	// raises an alarm here and keeps the inputs for analysis.
-	OnHard func(a, b *Tube, from, to float64, ra, rb Result)
+	OnHard func(a, b *Tube, from, to int64, ra, rb Result)
+}
+
+// Tighten returns the standard sp tightened by tol in distance and by timeTol
+// in time, for one pair of tubes (specification, section 5.2). A tolerance in
+// time lets a vertical segment count if it is in effect within timeTol of the
+// time of the test. It also covers a vertical uncertainty that grows in that
+// time.
+func Tighten(a, b *Tube, sp SepParams, tol, timeTol int64) SepParams {
+	grow, _ := fx.Mul(a.VURate+b.VURate, timeTol).DivCeil(fx.M)
+	return SepParams{Sh: sp.Sh + tol, SvTrue: sp.SvTrue + grow, VertSlack: sp.VertSlack + timeTol}
 }
 
 // Check returns the merged result. hard is true on a hard disagreement.
-func (d *Dual) Check(a, b *Tube, from, to float64, sp SepParams) (res Result, hard bool) {
+func (d *Dual) Check(a, b *Tube, from, to int64, sp SepParams) (res Result, hard bool) {
 	ra := d.A.FirstConflict(a, b, from, to, sp)
 	if d.B == nil {
 		return ra, false
@@ -37,9 +58,8 @@ func (d *Dual) Check(a, b *Tube, from, to float64, sp SepParams) (res Result, ha
 	rb := d.B.FirstConflict(a, b, from, to, sp)
 	if ra.Conflict == rb.Conflict {
 		res = ra
-		res.Margin = math.Min(ra.Margin, rb.Margin)
 		if ra.Conflict {
-			res.T = math.Min(ra.T, rb.T)
+			res.T = min(ra.T, rb.T)
 		}
 		return res, false
 	}
@@ -47,14 +67,7 @@ func (d *Dual) Check(a, b *Tube, from, to float64, sp SepParams) (res Result, ha
 	if ra.Conflict {
 		approver, rej = d.B, ra
 	}
-	// Tighten in distance and in time. A shift in time moves the windows of
-	// the vertical segments, and it also moves a vertical uncertainty that
-	// grows with time.
-	tight := sp
-	tight.Sh += d.Tol
-	tight.VertSlack += d.TimeTol
-	tight.SvTrue += (a.VURate + b.VURate) * d.TimeTol
-	if approver.FirstConflict(a, b, from, to, tight).Conflict {
+	if approver.FirstConflict(a, b, from, to, Tighten(a, b, sp, d.Tol, d.TimeTol)).Conflict {
 		d.Marginal++
 		return rej, false
 	}
@@ -63,4 +76,21 @@ func (d *Dual) Check(a, b *Tube, from, to float64, sp SepParams) (res Result, ha
 		d.OnHard(a, b, from, to, ra, rb)
 	}
 	return rej, true
+}
+
+// Arrangement returns a Verifier arrangement by the name that a record gives
+// it, built from the implementations in this package.
+//
+//	"dual"    the exact and the sampled implementation; both must approve
+//	"single"  the exact implementation alone
+//
+// The step of the sampled implementation is one second.
+func Arrangement(name string) (*Dual, error) {
+	switch name {
+	case "dual":
+		return &Dual{A: AnalyticChecker{}, B: SampledChecker{Step: fx.Sec}, Tol: Tol, TimeTol: TimeTol}, nil
+	case "single":
+		return &Dual{A: AnalyticChecker{}}, nil
+	}
+	return nil, fmt.Errorf("unknown verifier arrangement %q", name)
 }

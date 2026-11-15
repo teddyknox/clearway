@@ -6,14 +6,20 @@
 package sim
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"math"
 	"math/rand/v2"
 	"sort"
 
+	"github.com/teddyknox/clearway/internal/conv"
+	"github.com/teddyknox/clearway/internal/ftraj"
 	"github.com/teddyknox/clearway/internal/geom"
 	"github.com/teddyknox/clearway/internal/kernel"
 	"github.com/teddyknox/clearway/internal/planner"
+	"github.com/teddyknox/clearway/internal/record"
 	"github.com/teddyknox/clearway/internal/safetynet"
 	"github.com/teddyknox/clearway/internal/traj"
 )
@@ -38,8 +44,6 @@ type Config struct {
 	PLostUplink float64 // per clearance sent
 	PLostReply  float64 // per reply sent
 	PRefuse     float64 // per clearance received
-
-	Record bool // keep the kernel input log
 
 	// Scripted, if not empty, replaces random traffic with these flights.
 	Scripted []ScriptedFlight
@@ -104,22 +108,24 @@ func flatten(tb *kernel.Tube) *kernel.Tube {
 	return tb.WithTraj(&traj.Trajectory{Legs: tb.Traj.Legs, VSegs: vs})
 }
 
-func (f flattenChecker) FirstConflict(a, b *kernel.Tube, from, to float64, sp kernel.SepParams) kernel.Result {
+func (f flattenChecker) FirstConflict(a, b *kernel.Tube, from, to int64, sp kernel.SepParams) kernel.Result {
 	return f.inner.FirstConflict(flatten(a), flatten(b), from, to, sp)
 }
 
 // NewVerifier builds the Verifier arrangement named by mode.
 func NewVerifier(mode string) (*kernel.Dual, error) {
-	a, b := kernel.PairChecker(kernel.AnalyticChecker{}), kernel.PairChecker(kernel.SampledChecker{Step: 1})
 	switch mode {
-	case "dual":
-		return &kernel.Dual{A: a, B: b, Tol: 0.75, TimeTol: 1}, nil
-	case "single":
-		return &kernel.Dual{A: a}, nil
-	case "broken-single":
-		return &kernel.Dual{A: flattenChecker{a}}, nil
-	case "broken-dual":
-		return &kernel.Dual{A: flattenChecker{a}, B: b, Tol: 0.75, TimeTol: 1}, nil
+	case "dual", "single":
+		return kernel.Arrangement(mode)
+	case "broken-single", "broken-dual":
+		// The arrangement that the kernel declares, with a defect in the
+		// exact implementation.
+		d, err := kernel.Arrangement(declared[mode])
+		if err != nil {
+			return nil, err
+		}
+		d.A = flattenChecker{d.A}
+		return d, nil
 	}
 	return nil, fmt.Errorf("unknown verifier %q", mode)
 }
@@ -163,6 +169,7 @@ type conflictEpisode struct {
 type world struct {
 	cfg  Config
 	k    *kernel.Kernel
+	rec  *record.Writer // nil unless the run is recorded
 	net  *safetynet.Net
 	env  *planner.Env
 	heur *planner.Heuristic
@@ -200,16 +207,37 @@ func Run(cfg Config) (*Report, error) {
 	return &w.rep, nil
 }
 
-// RunRecorded executes one simulation and also returns the kernel, so that a
-// test can replay the input log.
-func RunRecorded(cfg Config) (*Report, *kernel.Kernel, error) {
-	cfg.Record = true
+// declared maps each Verifier mode of the simulator to the arrangement that
+// its kernel declares in a record. A faulty implementation does not declare
+// its fault.
+var declared = map[string]string{"dual": "dual", "single": "single", "broken-single": "single", "broken-dual": "dual"}
+
+// RunRecord executes one simulation and writes the record of its kernel to
+// out (docs/record.md). The record has a checkpoint for each minute of
+// kernel time and one at the end. Each key in signers signs every checkpoint.
+//
+// RunRecord returns an error if the record is not complete.
+func RunRecord(cfg Config, out io.Writer, signers ...ed25519.PrivateKey) (*Report, error) {
 	w, err := newWorld(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	w.rec, err = record.NewWriter(out, record.Header{
+		Cell:     fmt.Sprintf("sim-%d", cfg.Seed),
+		Verifier: declared[cfg.Verifier],
+		Params:   cfg.Kernel,
+		Note: fmt.Sprintf("Clearway simulator: seed %d, %g s, %g flights per hour, planner %s",
+			cfg.Seed, cfg.Duration, cfg.FlightsPerHour, cfg.Planner),
+	}, signers...)
+	if err != nil {
+		return nil, err
+	}
+	w.k.Rec = w.rec
 	w.run()
-	return &w.rep, w.k, nil
+	if err := w.rec.Close(); err != nil {
+		return nil, fmt.Errorf("the record is not complete: %w", err)
+	}
+	return &w.rep, nil
 }
 
 func netParams(cfg Config) safetynet.Params {
@@ -243,7 +271,6 @@ func newWorld(cfg Config) (*world, error) {
 		instructed: map[kernel.FlightID]instruction{},
 		conflicts:  map[[3]int]*conflictEpisode{},
 	}
-	w.k.Record = cfg.Record
 	w.rep.Config = cfg
 	w.env = &planner.Env{
 		K: w.k, Plans: map[kernel.FlightID]*planner.Plan{}, NoComm: map[kernel.FlightID]bool{},
@@ -261,8 +288,9 @@ func newWorld(cfg Config) (*world, error) {
 // and faults.
 func (w *world) generateTraffic() {
 	r := rand.New(rand.NewPCG(w.cfg.Seed, 0x74726166))
-	R := w.cfg.Kernel.CellRadius
-	K := w.cfg.Kernel.K
+	R := conv.NM(w.cfg.Kernel.CellRadius)
+	K := conv.NMps(w.cfg.Kernel.K)
+	W := conv.NM(w.cfg.Kernel.W)
 	if len(w.cfg.Scripted) > 0 {
 		script := append([]ScriptedFlight(nil), w.cfg.Scripted...)
 		sort.SliceStable(script, func(i, j int) bool { return script[i].At < script[j].At })
@@ -274,7 +302,7 @@ func (w *world) generateTraffic() {
 			a.speed, a.level = sf.SpeedKt*geom.Kt, sf.Level
 			a.stepFrac, a.stepBy = sf.StepFrac, sf.StepBy
 			a.drift = (r.Float64()*2 - 1) * 0.8 * K
-			a.latAmp = r.Float64() * 0.3 * w.cfg.Kernel.W
+			a.latAmp = r.Float64() * 0.3 * W
 			a.latPhase = r.Float64() * 2 * math.Pi
 			a.latOmega = 2 * math.Pi / (120 + 280*r.Float64())
 			a.climbFactor = 1.1 + 0.4*r.Float64()
@@ -312,7 +340,7 @@ func (w *world) generateTraffic() {
 			}
 		}
 		a.drift = (r.Float64()*2 - 1) * 0.8 * K
-		a.latAmp = r.Float64() * 0.3 * w.cfg.Kernel.W
+		a.latAmp = r.Float64() * 0.3 * W
 		a.latPhase = r.Float64() * 2 * math.Pi
 		a.latOmega = 2 * math.Pi / (120 + 280*r.Float64())
 		a.climbFactor = 1.1 + 0.4*r.Float64()
@@ -341,17 +369,17 @@ func (w *world) generateTraffic() {
 
 // entryTrajectory returns the requested trajectory of a, starting at t0 at
 // the given level.
-func (w *world) entryTrajectory(a *arrival, t0, level float64) (*traj.Trajectory, float64) {
+func (w *world) entryTrajectory(a *arrival, t0, level float64) (*ftraj.Trajectory, float64) {
 	start := a.entry.Sub(a.dir.Scale(a.speed * approachTime))
 	end := a.exit.Add(a.dir.Scale(10))
-	legs := traj.Route(t0, []geom.Vec2{start, end}, []float64{a.speed})
+	legs := ftraj.Route(t0, []geom.Vec2{start, end}, []float64{a.speed})
 	t1 := legs[0].T1
 	transit := a.entry.Dist(a.exit) / a.speed
-	vs := traj.Level(t0, t1, level)
+	vs := ftraj.Level(t0, t1, level)
 	if to := level + a.stepBy; a.stepBy != 0 && to >= minLevel && to <= maxLevel {
-		vs = traj.Step(t0, t1, level, t0+approachTime+a.stepFrac*transit, to, planner.ClimbRate)
+		vs = ftraj.Step(t0, t1, level, t0+approachTime+a.stepFrac*transit, to, planner.ClimbRate)
 	}
-	return &traj.Trajectory{Legs: legs, VSegs: vs}, transit
+	return &ftraj.Trajectory{Legs: legs, VSegs: vs}, transit
 }
 
 // admit asks the kernel to admit every waiting flight. It offers the filed
@@ -378,9 +406,10 @@ func (w *world) admit() {
 					continue
 				}
 				tr, transit := w.entryTrajectory(a, w.now+delay, level)
-				if v := w.k.Admit(a.id, tr); v.OK {
+				if v := w.k.Admit(a.id, conv.Traj(tr)); v.OK {
 					w.env.Plans[a.id] = &planner.Plan{Exit: tr.PosAt(tr.End()), Speed: a.speed, Level: level}
-					w.spawns = append(w.spawns, newAircraft(a, tr, transit))
+					// The aircraft flies the contract as the kernel holds it.
+					w.spawns = append(w.spawns, newAircraft(a, newPath(v.Contract.Traj), transit))
 					w.rep.Admitted++
 					w.tr.event(TraceEvent{T: w.now, Kind: "admit", A: int(a.id), Alt: level})
 					w.rep.EntryDelaySum += tr.Start() - a.firstRequest
@@ -429,23 +458,23 @@ func (w *world) receive(d *delivery) bool {
 		return false
 	}
 	c := d.contract
-	if ac.flown == c.Traj || ac.pendingRe == c.Traj {
+	if ac.flown.flies(c.Traj) || ac.pendingRe.flies(c.Traj) {
 		return true // a repeat of a clearance the crew already holds
 	}
 	refuse := w.ops.Float64() < w.cfg.PRefuse
 	if c.Recontract {
-		if refuse || w.now > c.Start()-10 {
+		if refuse || w.now > conv.Sec(c.Start())-10 {
 			return false
 		}
-		ac.pendingRe = c.Traj
+		ac.pendingRe = newPath(c.Traj)
 		return true
 	}
-	if refuse || ac.mode != modeContract || ac.busting || ac.pendingRe != nil || w.now > c.DivergeAt-10 {
+	if refuse || ac.mode != modeContract || ac.busting || ac.pendingRe != nil || w.now > conv.Sec(c.DivergeAt)-10 {
 		return false
 	}
 	// The new trajectory equals the old one up to the divergence point, so
 	// the crew can load it at once.
-	ac.flown = c.Traj
+	ac.flown = newPath(c.Traj)
 	ac.amendments++
 	return true
 }
@@ -511,10 +540,10 @@ func pair(a, b kernel.FlightID) [2]kernel.FlightID {
 // checkSeparation looks for true losses of separation among aircraft inside
 // the cell, and classifies each new one by what the kernel claimed.
 func (w *world) checkSeparation(in []*aircraft) {
-	p := w.cfg.Kernel
+	sh, svTrue := conv.NM(w.cfg.Kernel.Sh), conv.Ft(w.cfg.Kernel.SvTrue())
 	for i, a := range in {
 		for _, b := range in[i+1:] {
-			if math.Abs(a.alt-b.alt) >= p.SvTrue() {
+			if math.Abs(a.alt-b.alt) >= svTrue {
 				continue
 			}
 			dist := a.pos.Dist(b.pos)
@@ -522,7 +551,7 @@ func (w *world) checkSeparation(in []*aircraft) {
 				w.k.PairState(a.id, b.id) == kernel.PairVerified {
 				w.rep.ClosestVerified = dist
 			}
-			if dist >= p.Sh {
+			if dist >= sh {
 				continue
 			}
 			key := pair(a.id, b.id)
@@ -591,7 +620,7 @@ func (w *world) safetyNet(in []*aircraft) {
 			st := w.k.PairState(key[0], key[1])
 			class := "intruder"
 			switch {
-			case st == kernel.PairVerified && w.k.PairWindow(key[0], key[1]) >= w.now+w.net.P.LookAhead:
+			case st == kernel.PairVerified && conv.Sec(w.k.PairWindow(key[0], key[1])) >= w.now+w.net.P.LookAhead:
 				// The kernel holds the pair as separated beyond the net's
 				// look-ahead. Either the net or the kernel is wrong.
 				class = "verified"
@@ -614,7 +643,7 @@ func (w *world) safetyNet(in []*aircraft) {
 				other = key[1]
 			}
 			nuisance := w.k.PairState(key[0], key[1]) == kernel.PairVerified &&
-				w.k.PairWindow(key[0], key[1]) >= w.now+w.net.P.LookAhead
+				conv.Sec(w.k.PairWindow(key[0], key[1])) >= w.now+w.net.P.LookAhead
 			if ac := w.ac[id]; ac != nil {
 				ac.tactical(al.TargetAlt, w.now)
 				w.k.MarkIntruder(id)
@@ -658,7 +687,7 @@ func (w *world) trackConflicts() {
 			ep = &conflictEpisode{minTTC: math.Inf(1), intruder: c.Intruder}
 			w.conflicts[key] = ep
 		}
-		ep.minTTC = math.Min(ep.minTTC, c.T-w.now)
+		ep.minTTC = math.Min(ep.minTTC, conv.Sec(c.T)-w.now)
 		ep.lastSeen = w.now
 	}
 	for key, ep := range w.conflicts {
@@ -667,10 +696,10 @@ func (w *world) trackConflicts() {
 			delete(w.conflicts, key)
 		}
 	}
-	if c := w.k.Coast(); !math.IsInf(c, 1) {
+	if c := conv.Sec(w.k.Coast()); !math.IsInf(c, 1) {
 		w.coast = append(w.coast, c)
 	} else {
-		w.coast = append(w.coast, w.cfg.Kernel.Horizon)
+		w.coast = append(w.coast, conv.Sec(w.cfg.Kernel.Horizon))
 	}
 }
 
@@ -704,12 +733,12 @@ func (w *world) remove(id kernel.FlightID) {
 
 func (w *world) run() {
 	const dt = 1.0
-	R := w.cfg.Kernel.CellRadius
+	R := conv.NM(w.cfg.Kernel.CellRadius)
 	steps := int(w.cfg.Duration / dt)
 	var in []*aircraft
 	for s := 1; s <= steps; s++ {
 		w.now = float64(s) * dt
-		w.k.Advance(w.now)
+		w.k.Advance(conv.Time(w.now))
 
 		// Spawn admitted flights at the start of their contracts.
 		keep := w.spawns[:0]
@@ -782,9 +811,9 @@ func (w *world) run() {
 		if s%60 == 0 {
 			for _, re := range w.k.ReanchorAll() {
 				// Re-anchoring relabels time. The aircraft does not move.
-				if ac := w.ac[re.ID]; ac != nil && ac.flown == re.Old {
-					ac.flown = re.New
-					ac.tau -= re.Dt
+				if ac := w.ac[re.ID]; ac != nil && ac.flown.flies(re.Old) {
+					ac.flown = newPath(re.New)
+					ac.tau -= conv.Sec(re.Dt)
 				} else if ac != nil && ac.mode == modeContract && !ac.busting {
 					w.rep.SimInconsistencies++
 				}
@@ -811,6 +840,9 @@ func (w *world) run() {
 			// state that its counters describe.
 			w.tr.frame(w)
 		}
+		if w.rec != nil && (s%60 == 0 || s == steps) {
+			w.rec.Checkpoint(w.k.Now(), w.k.StateDigest())
+		}
 	}
 	for _, ep := range w.conflicts {
 		w.closeConflict(ep)
@@ -826,11 +858,12 @@ func (w *world) finish() {
 	for name, c := range w.env.Stats {
 		r.Sources[name] = *c
 	}
+	digest := w.k.StateDigest()
 	sort.Float64s(w.coast)
 	if n := len(w.coast); n > 0 {
 		r.CoastMin = w.coast[0]
 		r.CoastP1 = w.coast[n/100]
 		r.CoastMedian = w.coast[n/2]
 	}
-	r.Digest = w.k.Digest()
+	r.Digest = hex.EncodeToString(digest[:])
 }

@@ -1,84 +1,210 @@
 package traj
 
 import (
-	"math"
+	"math/big"
+	"strings"
 	"testing"
 
-	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/fx"
 )
 
-func line(t0 float64) *Trajectory {
-	legs := Route(t0, []geom.Vec2{{X: 0}, {X: 100}, {X: 100, Y: 50}}, []float64{0.1, 0.125})
-	return &Trajectory{Legs: legs, VSegs: Step(t0, legs[1].T1, 35000, t0+200, 37000, 1000.0/60)}
+// good returns a valid trajectory: two legs with a turn, and a climb.
+func good() *Trajectory {
+	const v = 250_000_000 // µm/s: 250 m/s
+	return &Trajectory{
+		Legs: []Leg{
+			{T0: 0, T1: 100 * fx.Sec, P0: fx.Vec{X: 0, Y: 0}, V: fx.Vec{X: v}},
+			{T0: 100 * fx.Sec, T1: 300 * fx.Sec, P0: fx.Vec{X: 100 * v, Y: 0}, V: fx.Vec{Y: v}},
+		},
+		VSegs: []VSeg{
+			{T0: 0, T1: 50 * fx.Sec, A0: 35000 * fx.FT, A1: 35000 * fx.FT},
+			{T0: 50 * fx.Sec, T1: 170 * fx.Sec, A0: 35000 * fx.FT, A1: 37000 * fx.FT},
+			{T0: 170 * fx.Sec, T1: 300 * fx.Sec, A0: 37000 * fx.FT, A1: 37000 * fx.FT},
+		},
+	}
 }
 
-func TestRouteAndProfile(t *testing.T) {
-	tr := line(10)
-	if err := tr.Validate(); err != nil {
+// Validate accepts a valid trajectory and names each kind of defect.
+func TestValidate(t *testing.T) {
+	if err := good().Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if tr.Start() != 10 || math.Abs(tr.End()-(10+1000+400)) > 1e-9 {
-		t.Fatalf("span %.1f to %.1f", tr.Start(), tr.End())
+	var none *Trajectory
+	if none.Validate() == nil || (&Trajectory{}).Validate() == nil {
+		t.Fatal("an empty trajectory is valid")
 	}
-	if p := tr.PosAt(510); math.Abs(p.X-50) > 1e-9 || p.Y != 0 {
-		t.Fatalf("position on leg 1: %+v", p)
+	many := good()
+	for len(many.VSegs) <= MaxParts {
+		last := many.VSegs[len(many.VSegs)-1]
+		many.VSegs[len(many.VSegs)-1].T1 = last.T0 + 1
+		many.VSegs = append(many.VSegs, VSeg{T0: last.T0 + 1, T1: last.T1, A0: last.A1, A1: last.A1})
 	}
-	if p := tr.PosAt(1210); math.Abs(p.X-100) > 1e-9 || math.Abs(p.Y-25) > 1e-9 {
-		t.Fatalf("position on leg 2: %+v", p)
-	}
-	if p := tr.PosAt(1e9); p.Dist(geom.Vec2{X: 100, Y: 50}) > 1e-9 {
-		t.Fatalf("position after the end: %+v", p)
-	}
-	// Level, then 2,000 ft at 1,000 ft/min from t = 210 to 330, then level.
-	for _, c := range []struct{ t, alt float64 }{{100, 35000}, {270, 36000}, {400, 37000}} {
-		if got := tr.AltAt(c.t); math.Abs(got-c.alt) > 1e-6 {
-			t.Errorf("altitude at %.0f: %.0f, want %.0f", c.t, got, c.alt)
+	for name, c := range map[string]struct {
+		change func(tr *Trajectory)
+		want   string
+	}{
+		"a leg that ends before it starts":    {func(tr *Trajectory) { tr.Legs[0].T1 = -1 }, "leg 0 malformed"},
+		"a leg with no duration":              {func(tr *Trajectory) { tr.Legs[0].T1 = 0 }, "leg 0 malformed"},
+		"a gap in time between legs":          {func(tr *Trajectory) { tr.Legs[1].T0++ }, "leg 1 time gap"},
+		"a jump in position between legs":     {func(tr *Trajectory) { tr.Legs[1].P0.Y = Join + 1 }, "leg 1 position jump"},
+		"a time outside the limit":            {func(tr *Trajectory) { tr.Legs[1].T1 = fx.MaxTime + 1 }, "leg 1 malformed"},
+		"a coordinate outside the limit":      {func(tr *Trajectory) { tr.Legs[0].P0.X = -fx.MaxCoord - 1 }, "leg 0 malformed"},
+		"a speed outside the limit":           {func(tr *Trajectory) { tr.Legs[0].V.Y = fx.MaxSpeed + 1 }, "leg 0 malformed"},
+		"a leg that leaves the valid area":    {func(tr *Trajectory) { tr.Legs[1].P0.Y = fx.MaxCoord - 1; tr.Legs[1].V.Y = fx.MaxSpeed }, "leg 1 leaves the valid area"},
+		"a vertical segment with no time":     {func(tr *Trajectory) { tr.VSegs[1].T1 = tr.VSegs[1].T0 }, "vseg 1 malformed"},
+		"a gap in time in the profile":        {func(tr *Trajectory) { tr.VSegs[1].T0-- }, "vseg 1 time gap"},
+		"a step in altitude":                  {func(tr *Trajectory) { tr.VSegs[2].A0++ }, "vseg 2 altitude jump"},
+		"an altitude outside the limit":       {func(tr *Trajectory) { tr.VSegs[0].A0 = fx.MaxCoord + 1 }, "vseg 0 malformed"},
+		"a profile shorter than the legs":     {func(tr *Trajectory) { tr.VSegs[2].T1-- }, "does not span"},
+		"a profile that starts after a leg":   {func(tr *Trajectory) { tr.VSegs[0].T0++ }, "does not span"},
+		"more segments than a trajectory has": {func(tr *Trajectory) { *tr = *many }, "too many"},
+	} {
+		tr := good()
+		c.change(tr)
+		if err := tr.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: error %v, want one with %q", name, err, c.want)
 		}
 	}
-	// A transition occupies its whole range for its whole duration.
-	if lo, hi := tr.BandOver(250, 250); lo != 35000 || hi != 37000 {
-		t.Errorf("band inside the transition: %.0f to %.0f", lo, hi)
+	// A leg may start up to Join from the end of the leg before it.
+	near := good()
+	near.Legs[1].P0.Y = Join
+	if err := near.Validate(); err != nil {
+		t.Errorf("a join of exactly Join: %v", err)
 	}
-	if lo, hi := tr.BandOver(100, 150); lo != 35000 || hi != 35000 {
-		t.Errorf("band before the transition: %.0f to %.0f", lo, hi)
+	// A leg that ends exactly on the limit of the valid area is valid.
+	edge := &Trajectory{
+		Legs:  []Leg{{T0: 0, T1: fx.Sec, P0: fx.Vec{X: fx.MaxCoord - fx.MaxSpeed}, V: fx.Vec{X: fx.MaxSpeed}}},
+		VSegs: []VSeg{{T0: 0, T1: fx.Sec}},
 	}
-	if lo, hi := tr.BandOver(100, 215); lo != 35000 || hi != 37000 {
-		t.Errorf("band over the start of the transition: %.0f to %.0f", lo, hi)
+	if err := edge.Validate(); err != nil {
+		t.Errorf("a leg that ends on the limit: %v", err)
 	}
-	if tr.MinSpeed() != 0.1 || tr.MaxSpeedOver(0, 5000) != 0.125 || tr.MaxSpeedOver(20, 30) != 0.1 {
-		t.Error("leg speeds")
+	edge.Legs[0].T1++
+	edge.VSegs[0].T1++
+	if edge.Validate() == nil {
+		t.Error("a leg that ends one microsecond beyond the limit is valid")
 	}
 }
 
-func TestShiftAndSplice(t *testing.T) {
-	tr := line(0)
-	sh := tr.Shift(-30)
-	if sh.PosAt(470).Dist(tr.PosAt(500)) > 1e-9 || sh.AltAt(240) != tr.AltAt(270) {
-		t.Fatal("shift does not move every time")
+// A position is exact in picometres. At the time where two legs meet, the
+// later leg gives it. A time outside the trajectory maps to its nearest end.
+func TestPosition(t *testing.T) {
+	tr := good()
+	tr.Legs[1].P0.Y = 7 // within Join of the end of leg 0, and not on it
+	const v = 250_000_000
+	for _, c := range []struct {
+		t    int64
+		want fx.Vec
+	}{
+		{0, fx.Vec{}},
+		{1, fx.Vec{X: v}}, // one microsecond at v µm/s is v pm
+		{100*fx.Sec - 1, fx.Vec{X: 100*v*fx.M - v}}, // the last time of leg 0
+		{100 * fx.Sec, fx.Vec{X: 100 * v * fx.M, Y: 7 * fx.M}},
+		{300 * fx.Sec, fx.Vec{X: 100 * v * fx.M, Y: 7*fx.M + 200*v*fx.M}},
+		{-5, fx.Vec{}},
+		{900 * fx.Sec, fx.Vec{X: 100 * v * fx.M, Y: 7*fx.M + 200*v*fx.M}},
+	} {
+		if got := tr.Pos(c.t); got != c.want {
+			t.Errorf("Pos(%d) = %+v, want %+v", c.t, got, c.want)
+		}
 	}
-	td := 600.0
-	p := tr.PosAt(td)
-	legs := Route(td, []geom.Vec2{p, {X: 200, Y: -40}}, []float64{0.12})
-	tail := &Trajectory{Legs: legs, VSegs: Level(td, legs[0].T1, 37000)}
-	sp, err := Splice(tr, td, tail)
+	if tr.VelAt(100*fx.Sec) != (fx.Vec{Y: v}) || tr.VelAt(100*fx.Sec-1) != (fx.Vec{X: v}) {
+		t.Error("VelAt at the join")
+	}
+}
+
+// An altitude inside a transition is linear and rounded down.
+func TestAltitude(t *testing.T) {
+	tr := good()
+	lo, hi := int64(35000*fx.FT), int64(37000*fx.FT)
+	for at := int64(50 * fx.Sec); at <= 170*fx.Sec; at += 7_777_777 {
+		// floor(lo + (hi − lo)·(at − 50 s)/120 s)
+		num := new(big.Int).Mul(big.NewInt(hi-lo), big.NewInt(at-50*fx.Sec))
+		want := lo + new(big.Int).Div(num, big.NewInt(120*fx.Sec)).Int64()
+		if got := tr.AltAt(at); got != want {
+			t.Fatalf("AltAt(%d) = %d, want %d", at, got, want)
+		}
+	}
+	if tr.AltAt(-1) != lo || tr.AltAt(1<<40) != hi {
+		t.Error("AltAt outside the trajectory")
+	}
+}
+
+// The lowest speed is rounded down and the highest is rounded up, so that an
+// allowance and a closing speed are never too small.
+func TestSpeeds(t *testing.T) {
+	tr := good()
+	tr.Legs[0].V = fx.Vec{X: 3, Y: 4}  // exactly 5
+	tr.Legs[1].V = fx.Vec{X: 10, Y: 1} // sqrt(101): between 10 and 11
+	tr.Legs[1].P0 = fx.Vec{}
+	if tr.MinSpeed() != 5 {
+		t.Errorf("MinSpeed = %d", tr.MinSpeed())
+	}
+	if v, n := tr.SpeedOver(0, 300*fx.Sec); v != 11 || n != 2 {
+		t.Errorf("SpeedOver the whole trajectory = %d over %d legs", v, n)
+	}
+	if v, n := tr.SpeedOver(0, 10*fx.Sec); v != 5 || n != 1 {
+		t.Errorf("SpeedOver leg 0 = %d over %d legs", v, n)
+	}
+	if v, n := tr.SpeedOver(400*fx.Sec, 500*fx.Sec); v != 11 || n != 1 {
+		t.Errorf("SpeedOver after the end = %d over %d legs", v, n)
+	}
+}
+
+// Shift moves every time and nothing else. Splice keeps the base up to a time
+// and continues with a tail.
+func TestShiftAndSplice(t *testing.T) {
+	tr := good()
+	sh := tr.Shift(-30 * fx.Sec)
+	if err := sh.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if sh.Start() != -30*fx.Sec || sh.End() != 270*fx.Sec || sh.Pos(70*fx.Sec) != tr.Pos(100*fx.Sec) || sh.AltAt(70*fx.Sec) != tr.AltAt(100*fx.Sec) {
+		t.Fatal("Shift changed the path")
+	}
+
+	at := int64(200 * fx.Sec) // on leg 1, in level flight at 37,000 ft
+	p := tr.Pos(at)
+	tail := &Trajectory{
+		Legs:  []Leg{{T0: at, T1: at + 60*fx.Sec, P0: fx.Vec{X: p.X / fx.M, Y: p.Y / fx.M}, V: fx.Vec{X: -1000, Y: 2000}}},
+		VSegs: []VSeg{{T0: at, T1: at + 60*fx.Sec, A0: 37000 * fx.FT, A1: 36000 * fx.FT}},
+	}
+	out, err := Splice(tr, at, tail)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sp.PosAt(300).Dist(tr.PosAt(300)) > 1e-9 || sp.AltAt(300) != tr.AltAt(300) {
-		t.Fatal("splice changed the trajectory before the splice time")
+	if len(out.Legs) != 3 || len(out.VSegs) != 4 || out.End() != at+60*fx.Sec || out.Legs[1].T1 != at || out.VSegs[2].T1 != at {
+		t.Fatalf("spliced: %+v", out)
 	}
-	if sp.PosAt(sp.End()).Dist(geom.Vec2{X: 200, Y: -40}) > 1e-6 {
-		t.Fatal("splice does not end at the tail's end")
+	if out.Pos(at-1) != tr.Pos(at-1) || out.Pos(at+fx.Sec) != tail.Pos(at+fx.Sec) {
+		t.Fatal("the spliced trajectory does not follow the base and then the tail")
 	}
-	// A tail that starts somewhere else does not make a valid trajectory.
-	bad := &Trajectory{Legs: Route(td, []geom.Vec2{{X: 0, Y: 9}, {X: 200}}, []float64{0.12}), VSegs: Level(td, td+10, 37000)}
-	bad.VSegs[0].T1 = bad.Legs[0].T1
-	if _, err := Splice(tr, td, bad); err == nil {
-		t.Fatal("discontinuous splice accepted")
+	// A tail that starts somewhere else, or at another level, or at another
+	// time, gives no trajectory.
+	off := *tail
+	off.Legs = []Leg{tail.Legs[0]}
+	off.Legs[0].P0.X += Join + 1
+	if _, err := Splice(tr, at, &off); err == nil {
+		t.Error("a tail that does not connect was spliced")
 	}
-	// A tail at another altitude does not either.
-	wrong := &Trajectory{Legs: legs, VSegs: Level(td, legs[0].T1, 39000)}
-	if _, err := Splice(tr, td, wrong); err == nil {
-		t.Fatal("altitude jump accepted")
+	lvl := *tail
+	lvl.VSegs = []VSeg{{T0: at, T1: at + 60*fx.Sec, A0: 36000 * fx.FT, A1: 36000 * fx.FT}}
+	if _, err := Splice(tr, at, &lvl); err == nil {
+		t.Error("a tail at another level was spliced")
+	}
+	for _, when := range []int64{tr.Start(), tr.End(), at + 1} {
+		if _, err := Splice(tr, when, tail); err == nil {
+			t.Errorf("a splice at %d was accepted", when)
+		}
+	}
+	// A cut inside a transition ends the cut segment at the altitude there.
+	mid := int64(110 * fx.Sec)
+	p = tr.Pos(mid)
+	climb := &Trajectory{
+		Legs:  []Leg{{T0: mid, T1: mid + fx.Sec, P0: fx.Vec{X: p.X / fx.M, Y: p.Y / fx.M}, V: fx.Vec{}}},
+		VSegs: []VSeg{{T0: mid, T1: mid + fx.Sec, A0: tr.AltAt(mid), A1: tr.AltAt(mid)}},
+	}
+	if out, err := Splice(tr, mid, climb); err != nil || out.VSegs[1].A1 != tr.AltAt(mid) {
+		t.Errorf("a splice inside a transition: %v", err)
 	}
 }

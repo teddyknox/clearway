@@ -1,0 +1,24 @@
+# The guest programs of the rvm tests. The Go tests use the built files
+# ../guest.elf, ../guest.digest, and ../insn.golden. To rebuild them, run
+# RVM_REBUILD_GUEST=1 go test ./internal/rvm/ (see ../../build_test.go).
+#
+# Build, with no network and no dependency:
+#
+#   cargo build --release --target riscv32imac-unknown-none-elf --offline
+[package]
+name = "guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# No link-time optimization: the program then calls the routines of
+# compiler_builtins (memcpy, memset, __udivdi3, and so on) as the toolchain
+# ships them, which is the code that the tests want to execute.
+[profile.release]
+panic = "abort"
+opt-level = 3
+codegen-units = 1
+lto = false
+
+[profile.dev]
+panic = "abort"

@@ -1,0 +1,775 @@
+# The machine code of each snippet of the tests of internal/rvm, in hexadecimal,
+# from the assembler of the Rust toolchain. A tab ends the code; the rest of
+# the line is the snippet, with " ; " for each line break.
+# RVM_REBUILD_GUEST=1 go test ./internal/rvm/ writes this file. Do not edit it.
+3385c500	add a0, a1, a2
+3385c540	sub a0, a1, a2
+3395c500	sll a0, a1, a2
+33a5c500	slt a0, a1, a2
+33b5c500	sltu a0, a1, a2
+33c5c500	xor a0, a1, a2
+33d5c500	srl a0, a1, a2
+33d5c540	sra a0, a1, a2
+33e5c500	or a0, a1, a2
+33f5c500	and a0, a1, a2
+3385c502	mul a0, a1, a2
+3395c502	mulh a0, a1, a2
+33a5c502	mulhsu a0, a1, a2
+33b5c502	mulhu a0, a1, a2
+33c5c502	div a0, a1, a2
+33d5c502	divu a0, a1, a2
+33e5c502	rem a0, a1, a2
+33f5c502	remu a0, a1, a2
+3305a500	add a0, a0, a0
+3305a540	sub a0, a0, a0
+b385c502	mul a1, a1, a2
+33c6c502	div a2, a1, a2
+3305b000	add a0, zero, a1
+3305b040	sub a0, zero, a1
+3380c500	add zero, a1, a2
+33b0c502	mulhu zero, a1, a2
+13005500	addi zero, a0, 5
+37503412	lui zero, 0x12345
+17100000	auipc zero, 1
+b30fdf01	add t6, t5, t4
+b3003100	add ra, sp, gp
+13850500	addi a0, a1, 0
+13851500	addi a0, a1, 1
+13852500	addi a0, a1, 2
+13854500	addi a0, a1, 4
+13858500	addi a0, a1, 8
+13850501	addi a0, a1, 16
+13850502	addi a0, a1, 32
+13850504	addi a0, a1, 64
+13850508	addi a0, a1, 128
+13850510	addi a0, a1, 256
+13850520	addi a0, a1, 512
+13850540	addi a0, a1, 1024
+1385f57f	addi a0, a1, 2047
+1385f5ff	addi a0, a1, -1
+1385e5ff	addi a0, a1, -2
+138505c0	addi a0, a1, -1024
+13850580	addi a0, a1, -2048
+13855555	addi a0, a1, 1365
+1385a5aa	addi a0, a1, -1366
+13a50500	slti a0, a1, 0
+13a51500	slti a0, a1, 1
+13a52500	slti a0, a1, 2
+13a54500	slti a0, a1, 4
+13a58500	slti a0, a1, 8
+13a50501	slti a0, a1, 16
+13a50502	slti a0, a1, 32
+13a50504	slti a0, a1, 64
+13a50508	slti a0, a1, 128
+13a50510	slti a0, a1, 256
+13a50520	slti a0, a1, 512
+13a50540	slti a0, a1, 1024
+13a5f57f	slti a0, a1, 2047
+13a5f5ff	slti a0, a1, -1
+13a5e5ff	slti a0, a1, -2
+13a505c0	slti a0, a1, -1024
+13a50580	slti a0, a1, -2048
+13a55555	slti a0, a1, 1365
+13a5a5aa	slti a0, a1, -1366
+13b50500	sltiu a0, a1, 0
+13b51500	sltiu a0, a1, 1
+13b52500	sltiu a0, a1, 2
+13b54500	sltiu a0, a1, 4
+13b58500	sltiu a0, a1, 8
+13b50501	sltiu a0, a1, 16
+13b50502	sltiu a0, a1, 32
+13b50504	sltiu a0, a1, 64
+13b50508	sltiu a0, a1, 128
+13b50510	sltiu a0, a1, 256
+13b50520	sltiu a0, a1, 512
+13b50540	sltiu a0, a1, 1024
+13b5f57f	sltiu a0, a1, 2047
+13b5f5ff	sltiu a0, a1, -1
+13b5e5ff	sltiu a0, a1, -2
+13b505c0	sltiu a0, a1, -1024
+13b50580	sltiu a0, a1, -2048
+13b55555	sltiu a0, a1, 1365
+13b5a5aa	sltiu a0, a1, -1366
+13c50500	xori a0, a1, 0
+13c51500	xori a0, a1, 1
+13c52500	xori a0, a1, 2
+13c54500	xori a0, a1, 4
+13c58500	xori a0, a1, 8
+13c50501	xori a0, a1, 16
+13c50502	xori a0, a1, 32
+13c50504	xori a0, a1, 64
+13c50508	xori a0, a1, 128
+13c50510	xori a0, a1, 256
+13c50520	xori a0, a1, 512
+13c50540	xori a0, a1, 1024
+13c5f57f	xori a0, a1, 2047
+13c5f5ff	xori a0, a1, -1
+13c5e5ff	xori a0, a1, -2
+13c505c0	xori a0, a1, -1024
+13c50580	xori a0, a1, -2048
+13c55555	xori a0, a1, 1365
+13c5a5aa	xori a0, a1, -1366
+13e50500	ori a0, a1, 0
+13e51500	ori a0, a1, 1
+13e52500	ori a0, a1, 2
+13e54500	ori a0, a1, 4
+13e58500	ori a0, a1, 8
+13e50501	ori a0, a1, 16
+13e50502	ori a0, a1, 32
+13e50504	ori a0, a1, 64
+13e50508	ori a0, a1, 128
+13e50510	ori a0, a1, 256
+13e50520	ori a0, a1, 512
+13e50540	ori a0, a1, 1024
+13e5f57f	ori a0, a1, 2047
+13e5f5ff	ori a0, a1, -1
+13e5e5ff	ori a0, a1, -2
+13e505c0	ori a0, a1, -1024
+13e50580	ori a0, a1, -2048
+13e55555	ori a0, a1, 1365
+13e5a5aa	ori a0, a1, -1366
+13f50500	andi a0, a1, 0
+13f51500	andi a0, a1, 1
+13f52500	andi a0, a1, 2
+13f54500	andi a0, a1, 4
+13f58500	andi a0, a1, 8
+13f50501	andi a0, a1, 16
+13f50502	andi a0, a1, 32
+13f50504	andi a0, a1, 64
+13f50508	andi a0, a1, 128
+13f50510	andi a0, a1, 256
+13f50520	andi a0, a1, 512
+13f50540	andi a0, a1, 1024
+13f5f57f	andi a0, a1, 2047
+13f5f5ff	andi a0, a1, -1
+13f5e5ff	andi a0, a1, -2
+13f505c0	andi a0, a1, -1024
+13f50580	andi a0, a1, -2048
+13f55555	andi a0, a1, 1365
+13f5a5aa	andi a0, a1, -1366
+13950500	slli a0, a1, 0
+13d50500	srli a0, a1, 0
+13d50540	srai a0, a1, 0
+13951500	slli a0, a1, 1
+13d51500	srli a0, a1, 1
+13d51540	srai a0, a1, 1
+13952500	slli a0, a1, 2
+13d52500	srli a0, a1, 2
+13d52540	srai a0, a1, 2
+13954500	slli a0, a1, 4
+13d54500	srli a0, a1, 4
+13d54540	srai a0, a1, 4
+13958500	slli a0, a1, 8
+13d58500	srli a0, a1, 8
+13d58540	srai a0, a1, 8
+13950501	slli a0, a1, 16
+13d50501	srli a0, a1, 16
+13d50541	srai a0, a1, 16
+13955501	slli a0, a1, 21
+13d55501	srli a0, a1, 21
+13d55541	srai a0, a1, 21
+1395f501	slli a0, a1, 31
+13d5f501	srli a0, a1, 31
+13d5f541	srai a0, a1, 31
+37050000	lui a0, 0x0
+17050000	auipc a0, 0x0
+37f5ffff	lui a0, 0xfffff
+17f5ffff	auipc a0, 0xfffff
+37553412	lui a0, 0x12345
+17553412	auipc a0, 0x12345
+37a5aaaa	lui a0, 0xaaaaa
+17a5aaaa	auipc a0, 0xaaaaa
+37555555	lui a0, 0x55555
+17555555	auipc a0, 0x55555
+37150000	lui a0, 0x1
+17150000	auipc a0, 0x1
+37250000	lui a0, 0x2
+17250000	auipc a0, 0x2
+37450000	lui a0, 0x4
+17450000	auipc a0, 0x4
+37850000	lui a0, 0x8
+17850000	auipc a0, 0x8
+37050100	lui a0, 0x10
+17050100	auipc a0, 0x10
+37050200	lui a0, 0x20
+17050200	auipc a0, 0x20
+37050400	lui a0, 0x40
+17050400	auipc a0, 0x40
+37050800	lui a0, 0x80
+17050800	auipc a0, 0x80
+37051000	lui a0, 0x100
+17051000	auipc a0, 0x100
+37052000	lui a0, 0x200
+17052000	auipc a0, 0x200
+37054000	lui a0, 0x400
+17054000	auipc a0, 0x400
+37058000	lui a0, 0x800
+17058000	auipc a0, 0x800
+37050001	lui a0, 0x1000
+17050001	auipc a0, 0x1000
+37050002	lui a0, 0x2000
+17050002	auipc a0, 0x2000
+37050004	lui a0, 0x4000
+17050004	auipc a0, 0x4000
+37050008	lui a0, 0x8000
+17050008	auipc a0, 0x8000
+37050010	lui a0, 0x10000
+17050010	auipc a0, 0x10000
+37050020	lui a0, 0x20000
+17050020	auipc a0, 0x20000
+37050040	lui a0, 0x40000
+17050040	auipc a0, 0x40000
+37050080	lui a0, 0x80000
+17050080	auipc a0, 0x80000
+ef000000	jal ra, 0
+eff0ffff	jal ra, -2
+eff0ff7f	jal ra, 1048574
+ef000080	jal ra, -1048576
+efa0ba2a	jal ra, 699050
+ef5045d5	jal ra, -699052
+ef504555	jal ra, 349524
+ef002000	jal ra, 2
+ef004000	jal ra, 4
+ef008000	jal ra, 8
+ef000001	jal ra, 16
+ef000002	jal ra, 32
+ef000004	jal ra, 64
+ef000008	jal ra, 128
+ef000010	jal ra, 256
+ef000020	jal ra, 512
+ef000040	jal ra, 1024
+ef001000	jal ra, 2048
+ef100000	jal ra, 4096
+ef200000	jal ra, 8192
+ef400000	jal ra, 16384
+ef800000	jal ra, 32768
+ef000100	jal ra, 65536
+ef000200	jal ra, 131072
+ef000400	jal ra, 262144
+ef000800	jal ra, 524288
+6f008000	jal zero, 8
+efff9fff	jal t6, -8
+e7000500	jalr ra, 0(a0)
+e7005500	jalr ra, 5(a0)
+67050500	jalr a0, 0(a0)
+6700c5ff	jalr zero, -4(a0)
+e7000580	jalr ra, -2048(a0)
+e700f57f	jalr ra, 2047(a0)
+e70f1f00	jalr t6, 1(t5)
+6308b500	beq a0, a1, 16
+6318b500	bne a0, a1, 16
+6348b500	blt a0, a1, 16
+6358b500	bge a0, a1, 16
+6368b500	bltu a0, a1, 16
+6378b500	bgeu a0, a1, 16
+e30fa5fe	beq a0, a0, -2
+e31fa5fe	bne a0, a0, -2
+e36fffff	bltu t5, t6, -2
+e30fa57e	beq a0, a0, 4094
+e31fa57e	bne a0, a0, 4094
+e36fff7f	bltu t5, t6, 4094
+6300a580	beq a0, a0, -4096
+6310a580	bne a0, a0, -4096
+6360ff81	bltu t5, t6, -4096
+e305a52a	beq a0, a0, 2730
+e315a52a	bne a0, a0, 2730
+e365ff2b	bltu t5, t6, 2730
+630aa5d4	beq a0, a0, -2732
+631aa5d4	bne a0, a0, -2732
+636affd5	bltu t5, t6, -2732
+630aa554	beq a0, a0, 1364
+631aa554	bne a0, a0, 1364
+636aff55	bltu t5, t6, 1364
+6301a500	beq a0, a0, 2
+6311a500	bne a0, a0, 2
+6361ff01	bltu t5, t6, 2
+6302a500	beq a0, a0, 4
+6312a500	bne a0, a0, 4
+6362ff01	bltu t5, t6, 4
+6304a500	beq a0, a0, 8
+6314a500	bne a0, a0, 8
+6364ff01	bltu t5, t6, 8
+6308a500	beq a0, a0, 16
+6318a500	bne a0, a0, 16
+6368ff01	bltu t5, t6, 16
+6300a502	beq a0, a0, 32
+6310a502	bne a0, a0, 32
+6360ff03	bltu t5, t6, 32
+6300a504	beq a0, a0, 64
+6310a504	bne a0, a0, 64
+6360ff05	bltu t5, t6, 64
+6300a508	beq a0, a0, 128
+6310a508	bne a0, a0, 128
+6360ff09	bltu t5, t6, 128
+6300a510	beq a0, a0, 256
+6310a510	bne a0, a0, 256
+6360ff11	bltu t5, t6, 256
+6300a520	beq a0, a0, 512
+6310a520	bne a0, a0, 512
+6360ff21	bltu t5, t6, 512
+6300a540	beq a0, a0, 1024
+6310a540	bne a0, a0, 1024
+6360ff41	bltu t5, t6, 1024
+e300a500	beq a0, a0, 2048
+e310a500	bne a0, a0, 2048
+e360ff01	bltu t5, t6, 2048
+03850500	lb a0, 0(a1)
+03c50500	lbu a0, 0(a1)
+03950500	lh a0, 0(a1)
+03d50500	lhu a0, 0(a1)
+03a50500	lw a0, 0(a1)
+03851500	lb a0, 1(a1)
+03c51500	lbu a0, 1(a1)
+03951500	lh a0, 1(a1)
+03d51500	lhu a0, 1(a1)
+03a51500	lw a0, 1(a1)
+03852500	lb a0, 2(a1)
+03c52500	lbu a0, 2(a1)
+03952500	lh a0, 2(a1)
+03d52500	lhu a0, 2(a1)
+03a52500	lw a0, 2(a1)
+03853500	lb a0, 3(a1)
+03c53500	lbu a0, 3(a1)
+03953500	lh a0, 3(a1)
+03d53500	lhu a0, 3(a1)
+03a53500	lw a0, 3(a1)
+03854500	lb a0, 4(a1)
+03c54500	lbu a0, 4(a1)
+03954500	lh a0, 4(a1)
+03d54500	lhu a0, 4(a1)
+03a54500	lw a0, 4(a1)
+03858500	lb a0, 8(a1)
+03c58500	lbu a0, 8(a1)
+03958500	lh a0, 8(a1)
+03d58500	lhu a0, 8(a1)
+03a58500	lw a0, 8(a1)
+03850501	lb a0, 16(a1)
+03c50501	lbu a0, 16(a1)
+03950501	lh a0, 16(a1)
+03d50501	lhu a0, 16(a1)
+03a50501	lw a0, 16(a1)
+03850502	lb a0, 32(a1)
+03c50502	lbu a0, 32(a1)
+03950502	lh a0, 32(a1)
+03d50502	lhu a0, 32(a1)
+03a50502	lw a0, 32(a1)
+03850504	lb a0, 64(a1)
+03c50504	lbu a0, 64(a1)
+03950504	lh a0, 64(a1)
+03d50504	lhu a0, 64(a1)
+03a50504	lw a0, 64(a1)
+03850508	lb a0, 128(a1)
+03c50508	lbu a0, 128(a1)
+03950508	lh a0, 128(a1)
+03d50508	lhu a0, 128(a1)
+03a50508	lw a0, 128(a1)
+03850510	lb a0, 256(a1)
+03c50510	lbu a0, 256(a1)
+03950510	lh a0, 256(a1)
+03d50510	lhu a0, 256(a1)
+03a50510	lw a0, 256(a1)
+03850520	lb a0, 512(a1)
+03c50520	lbu a0, 512(a1)
+03950520	lh a0, 512(a1)
+03d50520	lhu a0, 512(a1)
+03a50520	lw a0, 512(a1)
+03850540	lb a0, 1024(a1)
+03c50540	lbu a0, 1024(a1)
+03950540	lh a0, 1024(a1)
+03d50540	lhu a0, 1024(a1)
+03a50540	lw a0, 1024(a1)
+0385f57f	lb a0, 2047(a1)
+03c5f57f	lbu a0, 2047(a1)
+0395f57f	lh a0, 2047(a1)
+03d5f57f	lhu a0, 2047(a1)
+03a5f57f	lw a0, 2047(a1)
+0385f5ff	lb a0, -1(a1)
+03c5f5ff	lbu a0, -1(a1)
+0395f5ff	lh a0, -1(a1)
+03d5f5ff	lhu a0, -1(a1)
+03a5f5ff	lw a0, -1(a1)
+0385c5ff	lb a0, -4(a1)
+03c5c5ff	lbu a0, -4(a1)
+0395c5ff	lh a0, -4(a1)
+03d5c5ff	lhu a0, -4(a1)
+03a5c5ff	lw a0, -4(a1)
+03850580	lb a0, -2048(a1)
+03c50580	lbu a0, -2048(a1)
+03950580	lh a0, -2048(a1)
+03d50580	lhu a0, -2048(a1)
+03a50580	lw a0, -2048(a1)
+03855555	lb a0, 1365(a1)
+03c55555	lbu a0, 1365(a1)
+03955555	lh a0, 1365(a1)
+03d55555	lhu a0, 1365(a1)
+03a55555	lw a0, 1365(a1)
+0385a5aa	lb a0, -1366(a1)
+03c5a5aa	lbu a0, -1366(a1)
+0395a5aa	lh a0, -1366(a1)
+03d5a5aa	lhu a0, -1366(a1)
+03a5a5aa	lw a0, -1366(a1)
+03a00500	lw zero, 0(a1)
+83a50500	lw a1, 0(a1)
+2380a500	sb a0, 0(a1)
+2390a500	sh a0, 0(a1)
+23a0a500	sw a0, 0(a1)
+a380a500	sb a0, 1(a1)
+a390a500	sh a0, 1(a1)
+a3a0a500	sw a0, 1(a1)
+2381a500	sb a0, 2(a1)
+2391a500	sh a0, 2(a1)
+23a1a500	sw a0, 2(a1)
+a381a500	sb a0, 3(a1)
+a391a500	sh a0, 3(a1)
+a3a1a500	sw a0, 3(a1)
+2382a500	sb a0, 4(a1)
+2392a500	sh a0, 4(a1)
+23a2a500	sw a0, 4(a1)
+2384a500	sb a0, 8(a1)
+2394a500	sh a0, 8(a1)
+23a4a500	sw a0, 8(a1)
+2388a500	sb a0, 16(a1)
+2398a500	sh a0, 16(a1)
+23a8a500	sw a0, 16(a1)
+2380a502	sb a0, 32(a1)
+2390a502	sh a0, 32(a1)
+23a0a502	sw a0, 32(a1)
+2380a504	sb a0, 64(a1)
+2390a504	sh a0, 64(a1)
+23a0a504	sw a0, 64(a1)
+2380a508	sb a0, 128(a1)
+2390a508	sh a0, 128(a1)
+23a0a508	sw a0, 128(a1)
+2380a510	sb a0, 256(a1)
+2390a510	sh a0, 256(a1)
+23a0a510	sw a0, 256(a1)
+2380a520	sb a0, 512(a1)
+2390a520	sh a0, 512(a1)
+23a0a520	sw a0, 512(a1)
+2380a540	sb a0, 1024(a1)
+2390a540	sh a0, 1024(a1)
+23a0a540	sw a0, 1024(a1)
+a38fa57e	sb a0, 2047(a1)
+a39fa57e	sh a0, 2047(a1)
+a3afa57e	sw a0, 2047(a1)
+a38fa5fe	sb a0, -1(a1)
+a39fa5fe	sh a0, -1(a1)
+a3afa5fe	sw a0, -1(a1)
+238ea5fe	sb a0, -4(a1)
+239ea5fe	sh a0, -4(a1)
+23aea5fe	sw a0, -4(a1)
+2380a580	sb a0, -2048(a1)
+2390a580	sh a0, -2048(a1)
+23a0a580	sw a0, -2048(a1)
+a38aa554	sb a0, 1365(a1)
+a39aa554	sh a0, 1365(a1)
+a3aaa554	sw a0, 1365(a1)
+2385a5aa	sb a0, -1366(a1)
+2395a5aa	sh a0, -1366(a1)
+23a5a5aa	sw a0, -1366(a1)
+23a00500	sw zero, 0(a1)
+23a0b500	sw a1, 0(a1)
+0325f0ff	lw a0, -1(zero)
+0f00f00f	fence
+0f001003	fence rw, w
+0f003083	fence.tso
+0f000001	pause
+13000000	nop
+73001000	ebreak
+0290	c.ebreak
+130510001305150073001000	addi a0, zero, 1 ; addi a0, a0, 1 ; ebreak
+2fa50510	lr.w a0, (a1)
+2fa505102fa6d518	lr.w a0, (a1) ; sc.w a2, a3, (a1)
+2fa6d518	sc.w a2, a3, (a1)
+2fa505102f26d718afa7d518	lr.w a0, (a1) ; sc.w a2, a3, (a4) ; sc.w a5, a3, (a1)
+2fa505102fa6d518afa7a518	lr.w a0, (a1) ; sc.w a2, a3, (a1) ; sc.w a5, a0, (a1)
+2fa505102f2507102fa6d518	lr.w a0, (a1) ; lr.w a0, (a4) ; sc.w a2, a3, (a1)
+2fa5051023a0e5002fa6d518	lr.w a0, (a1) ; sw a4, 0(a1) ; sc.w a2, a3, (a1)
+2fa50510afa6d518	lr.w a0, (a1) ; sc.w a3, a3, (a1)
+2fa505162fa6d51e	lr.w.aqrl a0, (a1) ; sc.w.aqrl a2, a3, (a1)
+afa505102f26d718	lr.w a1, (a1) ; sc.w a2, a3, (a4)
+2fa50510afa5d518	lr.w a0, (a1) ; sc.w a1, a3, (a1)
+afa5d518	sc.w a1, a3, (a1)
+2fa005102fa6d518	lr.w zero, (a1) ; sc.w a2, a3, (a1)
+2fa5c508	amoswap.w a0, a2, (a1)
+2fa5c50e	amoswap.w.aqrl a0, a2, (a1)
+2fa5c500	amoadd.w a0, a2, (a1)
+2fa5c506	amoadd.w.aqrl a0, a2, (a1)
+2fa5c520	amoxor.w a0, a2, (a1)
+2fa5c526	amoxor.w.aqrl a0, a2, (a1)
+2fa5c560	amoand.w a0, a2, (a1)
+2fa5c566	amoand.w.aqrl a0, a2, (a1)
+2fa5c540	amoor.w a0, a2, (a1)
+2fa5c546	amoor.w.aqrl a0, a2, (a1)
+2fa5c580	amomin.w a0, a2, (a1)
+2fa5c586	amomin.w.aqrl a0, a2, (a1)
+2fa5c5a0	amomax.w a0, a2, (a1)
+2fa5c5a6	amomax.w.aqrl a0, a2, (a1)
+2fa5c5c0	amominu.w a0, a2, (a1)
+2fa5c5c6	amominu.w.aqrl a0, a2, (a1)
+2fa5c5e0	amomaxu.w a0, a2, (a1)
+2fa5c5e6	amomaxu.w.aqrl a0, a2, (a1)
+2fa6c500	amoadd.w a2, a2, (a1)
+afa5c508	amoswap.w a1, a2, (a1)
+2fa0c500	amoadd.w zero, a2, (a1)
+2fa505102fa7c500afa7d518	lr.w a0, (a1) ; amoadd.w a4, a2, (a1) ; sc.w a5, a3, (a1)
+2fa5c518	sc.w a0, a2, (a1)
+2fa505102f26d718	lr.w a0, (a1) ; sc.w a2, a3, (a4)
+130500009305a0003305b5009385f5ffe39c05fe	addi a0, zero, 0 ; addi a1, zero, 10 ; 1: ; add a0, a0, a1 ; addi a1, a1, -1 ; bne a1, zero, 1b
+0145a9452e95fd15f5fd	c.li a0, 0 ; c.li a1, 10 ; 1: ; c.add a0, a1 ; c.addi a1, -1 ; c.bnez a1, 1b
+ef00c000130515006f00c0001305050167800000	jal ra, 2f ; addi a0, a0, 1 ; jal zero, 3f ; 2: ; addi a0, a0, 16 ; jalr zero, 0(ra) ; 3:
+1920050519a041058280	c.jal 2f ; c.addi a0, 1 ; c.j 3f ; 2: ; c.addi a0, 16 ; c.jr ra ; 3:
+4800	c.addi4spn a0, sp, 4
+2800	c.addi4spn a0, sp, 8
+0808	c.addi4spn a0, sp, 16
+0810	c.addi4spn a0, sp, 32
+8800	c.addi4spn a0, sp, 64
+0801	c.addi4spn a0, sp, 128
+0802	c.addi4spn a0, sp, 256
+0804	c.addi4spn a0, sp, 512
+e81f	c.addi4spn a0, sp, 1020
+c80a	c.addi4spn a0, sp, 340
+2815	c.addi4spn a0, sp, 680
+4000	c.addi4spn s0, sp, 4
+fc1f	c.addi4spn a5, sp, 1020
+8841	c.lw a0, 0(a1)
+88c1	c.sw a0, 0(a1)
+c841	c.lw a0, 4(a1)
+c8c1	c.sw a0, 4(a1)
+8845	c.lw a0, 8(a1)
+88c5	c.sw a0, 8(a1)
+8849	c.lw a0, 16(a1)
+88c9	c.sw a0, 16(a1)
+8851	c.lw a0, 32(a1)
+88d1	c.sw a0, 32(a1)
+a841	c.lw a0, 64(a1)
+a8c1	c.sw a0, 64(a1)
+e85d	c.lw a0, 124(a1)
+e8dd	c.sw a0, 124(a1)
+e849	c.lw a0, 84(a1)
+e8c9	c.sw a0, 84(a1)
+8855	c.lw a0, 40(a1)
+88d5	c.sw a0, 40(a1)
+c043	c.lw s0, 4(a5)
+5c40	c.lw a5, 4(s0)
+0841	c.lw a0, 0(a0)
+c0c3	c.sw s0, 4(a5)
+5cc0	c.sw a5, 4(s0)
+08c1	c.sw a0, 0(a0)
+0100	c.nop
+0505	c.addi a0, 1
+0545	c.li a0, 1
+0589	c.andi a0, 1
+0565	c.lui a0, 0x1
+0905	c.addi a0, 2
+0945	c.li a0, 2
+0989	c.andi a0, 2
+0965	c.lui a0, 0x2
+1105	c.addi a0, 4
+1145	c.li a0, 4
+1189	c.andi a0, 4
+1165	c.lui a0, 0x4
+2105	c.addi a0, 8
+2145	c.li a0, 8
+2189	c.andi a0, 8
+2165	c.lui a0, 0x8
+4105	c.addi a0, 16
+4145	c.li a0, 16
+4189	c.andi a0, 16
+4165	c.lui a0, 0x10
+7d05	c.addi a0, 31
+7d45	c.li a0, 31
+7d89	c.andi a0, 31
+7d65	c.lui a0, 0x1f
+7d15	c.addi a0, -1
+7d55	c.li a0, -1
+7d99	c.andi a0, -1
+7d75	c.lui a0, 0xfffff
+0115	c.addi a0, -32
+0155	c.li a0, -32
+0199	c.andi a0, -32
+0175	c.lui a0, 0xfffe0
+5505	c.addi a0, 21
+5545	c.li a0, 21
+5589	c.andi a0, 21
+5565	c.lui a0, 0x15
+2915	c.addi a0, -22
+2955	c.li a0, -22
+2999	c.andi a0, -22
+2975	c.lui a0, 0xfffea
+8500	c.addi ra, 1
+fd1f	c.addi t6, -1
+1101	c.addi sp, 4
+0145	c.li a0, 0
+9540	c.li ra, 5
+ed5f	c.li t6, -5
+0189	c.andi a0, 0
+3d88	c.andi s0, 15
+c19b	c.andi a5, -16
+8560	c.lui ra, 1
+fd7f	c.lui t6, 0xfffff
+8171	c.lui gp, 0xfffe0
+4161	c.addi16sp sp, 16
+0561	c.addi16sp sp, 32
+2161	c.addi16sp sp, 64
+0961	c.addi16sp sp, 128
+1161	c.addi16sp sp, 256
+7d61	c.addi16sp sp, 496
+7d71	c.addi16sp sp, -16
+0171	c.addi16sp sp, -512
+7161	c.addi16sp sp, 336
+0d71	c.addi16sp sp, -352
+0581	c.srli a0, 1
+0585	c.srai a0, 1
+0605	c.slli a0, 1
+0981	c.srli a0, 2
+0985	c.srai a0, 2
+0a05	c.slli a0, 2
+1181	c.srli a0, 4
+1185	c.srai a0, 4
+1205	c.slli a0, 4
+2181	c.srli a0, 8
+2185	c.srai a0, 8
+2205	c.slli a0, 8
+4181	c.srli a0, 16
+4185	c.srai a0, 16
+4205	c.slli a0, 16
+5581	c.srli a0, 21
+5585	c.srai a0, 21
+5605	c.slli a0, 21
+7d81	c.srli a0, 31
+7d85	c.srai a0, 31
+7e05	c.slli a0, 31
+1180	c.srli s0, 4
+9183	c.srli a5, 4
+1184	c.srai s0, 4
+9187	c.srai a5, 4
+9200	c.slli ra, 4
+920f	c.slli t6, 4
+0d8d	c.sub a0, a1
+1d8c	c.sub s0, a5
+818f	c.sub a5, s0
+858c	c.sub s1, s1
+2d8d	c.xor a0, a1
+3d8c	c.xor s0, a5
+a18f	c.xor a5, s0
+a58c	c.xor s1, s1
+4d8d	c.or a0, a1
+5d8c	c.or s0, a5
+c18f	c.or a5, s0
+c58c	c.or s1, s1
+6d8d	c.and a0, a1
+7d8c	c.and s0, a5
+e18f	c.and a5, s0
+e58c	c.and s1, s1
+fdbf	c.j -2
+fd3f	c.jal -2
+fdaf	c.j 2046
+fd2f	c.jal 2046
+01b0	c.j -2048
+0130	c.jal -2048
+91ab	c.j 1364
+912b	c.jal 1364
+6db4	c.j -1366
+6d34	c.jal -1366
+6da4	c.j 682
+6d24	c.jal 682
+09a0	c.j 2
+0920	c.jal 2
+11a0	c.j 4
+1120	c.jal 4
+21a0	c.j 8
+2120	c.jal 8
+01a8	c.j 16
+0128	c.jal 16
+05a0	c.j 32
+0520	c.jal 32
+81a0	c.j 64
+8120	c.jal 64
+41a0	c.j 128
+4120	c.jal 128
+01a2	c.j 256
+0122	c.jal 256
+01a4	c.j 512
+0124	c.jal 512
+01a1	c.j 1024
+0121	c.jal 1024
+7ddd	c.beqz a0, -2
+7dfd	c.bnez a0, -2
+7dcd	c.beqz a0, 254
+7ded	c.bnez a0, 254
+01d1	c.beqz a0, -256
+01f1	c.bnez a0, -256
+31c9	c.beqz a0, 84
+31e9	c.bnez a0, 84
+4dd5	c.beqz a0, -86
+4df5	c.bnez a0, -86
+4dc5	c.beqz a0, 170
+4de5	c.bnez a0, 170
+09c1	c.beqz a0, 2
+09e1	c.bnez a0, 2
+11c1	c.beqz a0, 4
+11e1	c.bnez a0, 4
+01c5	c.beqz a0, 8
+01e5	c.bnez a0, 8
+01c9	c.beqz a0, 16
+01e9	c.bnez a0, 16
+05c1	c.beqz a0, 32
+05e1	c.bnez a0, 32
+21c1	c.beqz a0, 64
+21e1	c.bnez a0, 64
+41c1	c.beqz a0, 128
+41e1	c.bnez a0, 128
+01c4	c.beqz s0, 8
+81c7	c.beqz a5, 8
+01e4	c.bnez s0, 8
+81e7	c.bnez a5, 8
+0245	c.lwsp a0, 0(sp)
+2ac0	c.swsp a0, 0(sp)
+1245	c.lwsp a0, 4(sp)
+2ac2	c.swsp a0, 4(sp)
+2245	c.lwsp a0, 8(sp)
+2ac4	c.swsp a0, 8(sp)
+4245	c.lwsp a0, 16(sp)
+2ac8	c.swsp a0, 16(sp)
+0255	c.lwsp a0, 32(sp)
+2ad0	c.swsp a0, 32(sp)
+0645	c.lwsp a0, 64(sp)
+aac0	c.swsp a0, 64(sp)
+0a45	c.lwsp a0, 128(sp)
+2ac1	c.swsp a0, 128(sp)
+7e55	c.lwsp a0, 252(sp)
+aadf	c.swsp a0, 252(sp)
+5645	c.lwsp a0, 84(sp)
+aaca	c.swsp a0, 84(sp)
+2a55	c.lwsp a0, 168(sp)
+2ad5	c.swsp a0, 168(sp)
+9240	c.lwsp ra, 4(sp)
+924f	c.lwsp t6, 4(sp)
+1241	c.lwsp sp, 4(sp)
+06c2	c.swsp ra, 4(sp)
+7ec2	c.swsp t6, 4(sp)
+02c2	c.swsp zero, 4(sp)
+0ac2	c.swsp sp, 4(sp)
+0285	c.jr a0
+8280	c.jr ra
+828f	c.jr t6
+0295	c.jalr a0
+8290	c.jalr ra
+829f	c.jalr t6
+2e85	c.mv a0, a1
+868f	c.mv t6, ra
+fe80	c.mv ra, t6
+2a81	c.mv sp, a0
+2e95	c.add a0, a1
+869f	c.add t6, ra
+fe90	c.add ra, t6
+2a95	c.add a0, a0
+2a91	c.add sp, a0
+73000000	ecall
+6f000000	jal zero, 0
+930800001305a00273000000	addi a7, zero, 0 ; addi a0, zero, 42 ; ecall
+13051500631806001306100023a0b2006ff01fff	1: ; addi a0, a0, 1 ; bne a2, zero, 2f ; addi a2, zero, 1 ; sw a1, 0(t0) ; jal zero, 1b ; 2:
+13054506	addi a0, a0, 100
+13051500	addi a0, a0, 1
+13051500e34eb5fe	1: ; addi a0, a0, 1 ; blt a0, a1, 1b

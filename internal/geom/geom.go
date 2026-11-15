@@ -1,4 +1,6 @@
-// Package geom provides plane vectors and small numeric helpers.
+// Package geom provides plane vectors in floating point, for the simulator
+// and the planners. The kernel does not use it: the kernel computes with the
+// integers of package fx.
 //
 // Units: nautical miles and seconds.
 package geom
@@ -40,36 +42,4 @@ func (a Vec2) Rotate(rad float64) Vec2 {
 func Polar(r, theta float64) Vec2 {
 	s, c := math.Sincos(theta)
 	return Vec2{r * c, r * s}
-}
-
-// SolveQuadratic returns the real roots of a·x² + b·x + c = 0 in ascending
-// order. n is the number of roots returned: 0, 1 (linear case), or 2.
-func SolveQuadratic(a, b, c float64) (r1, r2 float64, n int) {
-	if math.Abs(a) < 1e-14 {
-		if math.Abs(b) < 1e-14 {
-			return 0, 0, 0
-		}
-		return -c / b, 0, 1
-	}
-	disc := b*b - 4*a*c
-	if disc < 0 {
-		return 0, 0, 0
-	}
-	s := math.Sqrt(disc)
-	var q float64
-	if b >= 0 {
-		q = -0.5 * (b + s)
-	} else {
-		q = -0.5 * (b - s)
-	}
-	r1 = q / a
-	if q != 0 {
-		r2 = c / q
-	} else {
-		r2 = r1
-	}
-	if r1 > r2 {
-		r1, r2 = r2, r1
-	}
-	return r1, r2, 2
 }

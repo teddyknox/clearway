@@ -20,6 +20,11 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: Vet
         run: go vet ./...
+      # The built kernel program is in the repository. This step builds the
+      # same kernel as a native program, so that the tests also compare the
+      # Rust source with the Go kernel.
+      - name: Kernel in Rust
+        run: cargo build --release --manifest-path guest/Cargo.toml -p clearway-kernel-host
       - name: Test
         run: go test ./...
       - name: Viewer script

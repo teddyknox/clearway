@@ -1,10 +1,11 @@
 package kernel
 
 import (
-	"math"
+	"errors"
+	"fmt"
 	"sort"
 
-	"github.com/teddyknox/clearway/internal/geom"
+	"github.com/teddyknox/clearway/internal/fx"
 	"github.com/teddyknox/clearway/internal/traj"
 )
 
@@ -25,69 +26,136 @@ const (
 	PendingUnknown               // delivery failed: the aircraft may fly either contract
 )
 
-// Params are the design values of one cell. DefaultParams returns the initial
-// values used in the design document.
+// Params are the design values of one cell, in the units of package fx.
+// DefaultParams returns the initial values used in the design document.
 type Params struct {
-	Sh   float64 // horizontal separation standard (nm)
-	Sv   float64 // vertical separation standard between assigned levels (ft)
-	VTol float64 // altitude-keeping tolerance (ft)
+	Sh   int64 // horizontal separation standard (µm)
+	Sv   int64 // vertical separation standard between assigned levels (µm)
+	VTol int64 // altitude-keeping tolerance (µm)
 
-	Horizon         float64 // verification horizon (s)
-	CommitHorizon   float64 // an amendment must be conflict-free this far ahead (s)
-	IntruderHorizon float64 // length of an intruder tube (s)
-	ExtendSlack     float64 // a verified window is extended when it is this short of the horizon (s)
+	Horizon         int64 // verification horizon (µs)
+	CommitHorizon   int64 // an amendment must be conflict-free this far ahead (µs)
+	IntruderHorizon int64 // length of an intruder tube (µs)
+	ExtendSlack     int64 // a verified window is extended when it is this short of the horizon (µs)
 
-	W  float64 // lateral navigation tolerance (nm)
-	E0 float64 // surveillance and along-track tolerance at the anchor (nm)
-	Bh float64 // detection buffer: distance an aircraft can stray before the Monitor reacts (nm)
-	K  float64 // growth of along-track uncertainty (nm/s)
+	W  int64 // lateral navigation tolerance (µm)
+	E0 int64 // surveillance and along-track tolerance at the anchor (µm)
+	Bh int64 // detection buffer: distance an aircraft can stray before the Monitor reacts (µm)
+	K  int64 // growth of along-track uncertainty (µm/s)
 
-	MinLead    float64 // least time from a proposal to its divergence point (s)
-	CellRadius float64 // the cell is a disc around the origin (nm)
+	MinLead    int64 // least time from a proposal to its divergence point (µs)
+	CellRadius int64 // the cell is a disc around the origin (µm)
 
-	IntruderR0    float64 // radius of an intruder tube at the track time (nm)
-	IntruderK     float64 // growth of an intruder tube (nm/s)
-	IntruderVU    float64 // vertical uncertainty of a climbing or descending intruder (ft)
-	RecontractTol float64 // a re-contract must start this close to the extrapolated track (nm)
+	IntruderR0    int64 // radius of an intruder tube at the track time (µm)
+	IntruderK     int64 // growth of an intruder tube (µm/s)
+	IntruderVU    int64 // vertical uncertainty of a climbing or descending intruder (µm)
+	RecontractTol int64 // a re-contract must start this close to the extrapolated track (µm)
 
-	IntentCheck     bool    // compare broadcast selected altitude with the contract
-	IntentLookahead float64 // a selected altitude may anticipate a transition by this much (s)
+	IntentCheck     bool  // compare broadcast selected altitude with the contract
+	IntentLookahead int64 // a selected altitude may anticipate a transition by this much (µs)
 }
 
 // DefaultParams returns the initial design values.
 func DefaultParams() Params {
 	return Params{
-		Sh: 5, Sv: 1000, VTol: 200,
-		Horizon: 1200, CommitHorizon: 900, IntruderHorizon: 300, ExtendSlack: 30,
-		W: 0.5, E0: 0.2, Bh: 0.5, K: 10 * geom.Kt,
-		MinLead: 120, CellRadius: 150,
-		IntruderR0: 1.5, IntruderK: 2.0 / 60, IntruderVU: 300, RecontractTol: 0.5,
-		IntentCheck: true, IntentLookahead: 120,
+		Sh: 5 * fx.NM, Sv: 1000 * fx.FT, VTol: 200 * fx.FT,
+		Horizon: 1200 * fx.Sec, CommitHorizon: 900 * fx.Sec, IntruderHorizon: 300 * fx.Sec, ExtendSlack: 30 * fx.Sec,
+		W: fx.NM / 2, E0: fx.NM / 5, Bh: fx.NM / 2, K: 10 * fx.NM / 3600,
+		MinLead: 120 * fx.Sec, CellRadius: 150 * fx.NM,
+		IntruderR0: 3 * fx.NM / 2, IntruderK: 2 * fx.NM / 60, IntruderVU: 300 * fx.FT, RecontractTol: fx.NM / 2,
+		IntentCheck: true, IntentLookahead: 120 * fx.Sec,
 	}
+}
+
+// The limits of the parameters. With them, no operation of the kernel can
+// overflow on valid inputs.
+const (
+	maxHorizon         = 1 << 40 // µs: about 12 days
+	maxIntruderHorizon = 1 << 29 // µs: about 9 minutes; an intruder tube must stay inside fx.MaxCoord
+)
+
+// Validate reports the first value that no cell can run with. A caller that
+// reads parameters from a file must call it. New does not.
+func (p Params) Validate() error {
+	type named struct {
+		name  string
+		v, hi int64
+	}
+	for _, x := range []named{
+		{"Sh", p.Sh, fx.MaxLen}, {"Sv", p.Sv, fx.MaxLen}, {"CellRadius", p.CellRadius, fx.MaxLen},
+		{"Horizon", p.Horizon, maxHorizon}, {"CommitHorizon", p.CommitHorizon, maxHorizon},
+		{"IntruderHorizon", p.IntruderHorizon, maxIntruderHorizon},
+	} {
+		if x.v <= 0 || x.v > x.hi {
+			return fmt.Errorf("parameter %s must be from 1 to %d", x.name, x.hi)
+		}
+	}
+	for _, x := range []named{
+		{"VTol", p.VTol, fx.MaxLen}, {"W", p.W, fx.MaxLen}, {"E0", p.E0, fx.MaxLen}, {"Bh", p.Bh, fx.MaxLen},
+		{"IntruderR0", p.IntruderR0, fx.MaxLen}, {"IntruderVU", p.IntruderVU, fx.MaxLen},
+		{"RecontractTol", p.RecontractTol, fx.MaxLen},
+		{"K", p.K, fx.MaxSpeed}, {"IntruderK", p.IntruderK, fx.MaxSpeed},
+		{"ExtendSlack", p.ExtendSlack, maxHorizon}, {"MinLead", p.MinLead, maxHorizon},
+		{"IntentLookahead", p.IntentLookahead, maxHorizon},
+	} {
+		if x.v < 0 || x.v > x.hi {
+			return fmt.Errorf("parameter %s must be from 0 to %d", x.name, x.hi)
+		}
+	}
+	if p.SvTrue() <= 0 {
+		return errors.New("parameter Sv must be more than twice VTol")
+	}
+	if p.CommitHorizon > p.Horizon {
+		return errors.New("parameter CommitHorizon must not exceed Horizon")
+	}
+	if p.BaseR0() > fx.MaxLen {
+		return errors.New("parameters W, E0, and Bh are too large together")
+	}
+	return nil
 }
 
 // SvTrue is the least vertical distance between two true altitudes that the
 // standard assures: two aircraft at adjacent levels, each off by VTol.
-func (p Params) SvTrue() float64 { return p.Sv - 2*p.VTol }
+func (p Params) SvTrue() int64 { return p.Sv - 2*p.VTol }
 
 // BaseR0 is the protected radius of a freshly anchored contract.
-func (p Params) BaseR0() float64 { return p.W + p.E0 + p.Bh }
+func (p Params) BaseR0() int64 { return p.W + p.E0 + p.Bh }
 
 // Track is one surveillance report from Fusion.
 type Track struct {
-	T      float64
-	Pos    geom.Vec2
-	Vel    geom.Vec2 // nm/s
-	Alt    float64   // ft
-	VRate  float64   // ft/s
-	SelAlt float64   // broadcast selected altitude (ft); NaN if not broadcast
+	T      int64  // µs
+	Pos    fx.Vec // µm
+	Vel    fx.Vec // µm/s
+	Alt    int64  // µm
+	VRate  int64  // µm/s
+	HasSel bool   // the aircraft broadcasts a selected altitude
+	SelAlt int64  // the selected altitude (µm); zero if HasSel is false
 }
+
+// Valid reports whether every value of the track is inside the limits of
+// package fx. The kernel ignores a track that is not valid.
+func (tr Track) Valid() bool {
+	in := func(limit int64, vals ...int64) bool {
+		for _, v := range vals {
+			if v < -limit || v > limit {
+				return false
+			}
+		}
+		return true
+	}
+	return in(maxClock, tr.T) && in(fx.MaxTrack, tr.Pos.X, tr.Pos.Y, tr.Alt, tr.SelAlt) &&
+		in(fx.MaxSpeed, tr.Vel.X, tr.Vel.Y, tr.VRate) && (tr.HasSel || tr.SelAlt == 0)
+}
+
+// maxClock is the latest time of the kernel's clock and of a track (µs). It
+// leaves room for a horizon below fx.MaxTime.
+const maxClock = fx.MaxTime / 2
 
 // Contract is a cleared trajectory with its tube.
 type Contract struct {
 	Tube
-	DivergeAt  float64 // time at which an amendment leaves the previous contract
-	Recontract bool    // issued to an intruder; starts from its extrapolated track
+	DivergeAt  int64 // time at which an amendment leaves the previous contract (µs)
+	Recontract bool  // issued to an intruder; starts from its extrapolated track
 }
 
 // Flight is the Store's record of one flight.
@@ -134,7 +202,7 @@ type Verdict struct {
 	OK       bool
 	Reason   RejectReason
 	With     FlightID // the other flight, for RejConflict and RejDisagree
-	At       float64  // time of the conflict
+	At       int64    // time of the conflict (µs)
 	Contract *Contract
 }
 
@@ -153,8 +221,8 @@ const (
 // from time T on.
 type Conflict struct {
 	A, B     FlightID
-	T        float64
-	Intruder bool // B is an intruder; A holds the contract
+	T        int64 // µs
+	Intruder bool  // B is an intruder; A holds the contract
 }
 
 // PairStatus is what the kernel currently claims about two flights.
@@ -197,21 +265,22 @@ type Kernel struct {
 	P Params
 	D *Dual
 
-	now      float64
+	now      int64 // µs
 	flights  map[FlightID]*Flight
 	order    []FlightID // ascending; fixes iteration order
 	nextTube uint64
 
 	// windows holds, for each pair of contract tubes of two flights, the time
 	// until which the Verifier has shown them separated (I2).
-	windows   map[pairKey]float64
+	windows   map[pairKey]int64
 	conflicts []Conflict
-	coast     float64
+	coast     int64
 
-	Stats   Stats
-	Record  bool
-	Log     []Input
-	outHash uint64
+	Stats Stats
+
+	// Rec, if set, receives every input and every verdict (see Recorder).
+	Rec Recorder
+
 	scratch []*Tube
 }
 
@@ -220,13 +289,12 @@ func New(p Params, d *Dual) *Kernel {
 	return &Kernel{
 		P: p, D: d,
 		flights: map[FlightID]*Flight{},
-		windows: map[pairKey]float64{},
-		coast:   math.Inf(1),
-		outHash: 14695981039346656037,
+		windows: map[pairKey]int64{},
+		coast:   fx.NoLimit,
 	}
 }
 
-func (k *Kernel) Now() float64 { return k.now }
+func (k *Kernel) Now() int64 { return k.now }
 
 // Flight returns the record of id, or nil.
 func (k *Kernel) Flight(id FlightID) *Flight { return k.flights[id] }
@@ -241,13 +309,14 @@ func (k *Kernel) Conflicts() []Conflict { return k.conflicts }
 
 // Coast returns the coast time found by the last Tick: the shortest time for
 // which every pair of contracts stays verified with no further clearance.
-// It is +Inf when no pair limits it.
-func (k *Kernel) Coast() float64 { return k.coast }
+// It is fx.NoLimit when no pair limits it.
+func (k *Kernel) Coast() int64 { return k.coast }
 
-// Advance moves the kernel clock to t.
-func (k *Kernel) Advance(t float64) {
+// Advance moves the kernel clock to t, if t is later than the clock and not
+// later than the last valid time of the clock.
+func (k *Kernel) Advance(t int64) {
 	k.record(Input{Kind: InAdvance, T: t})
-	if t > k.now {
+	if t > k.now && t <= maxClock {
 		k.now = t
 	}
 }
@@ -256,11 +325,14 @@ func (k *Kernel) sep() SepParams { return SepParams{Sh: k.P.Sh, SvTrue: k.P.SvTr
 
 func (k *Kernel) nextID() uint64 { k.nextTube++; return k.nextTube }
 
+// closed reports whether tr ends at or outside the cell boundary. An end that
+// is inside by at most traj.Join counts as on the boundary.
 func (k *Kernel) closed(tr *traj.Trajectory) bool {
-	return tr.PosAt(tr.End()).Norm() >= k.P.CellRadius-1e-6
+	end := tr.Pos(tr.End())
+	return fx.SqSum(end.X, end.Y).Cmp(fx.Sq((k.P.CellRadius-traj.Join)*fx.M)) >= 0
 }
 
-func (k *Kernel) contractTube(id FlightID, tr *traj.Trajectory, anchor, r0 float64) Tube {
+func (k *Kernel) contractTube(id FlightID, tr *traj.Trajectory, anchor, r0 int64) Tube {
 	return Tube{Flight: id, Traj: tr, Anchor: anchor, R0: r0, K: k.P.K, VU0: k.P.VTol, VMin: tr.MinSpeed()}
 }
 
@@ -297,14 +369,14 @@ func (k *Kernel) removeTube(tb *Tube) {
 
 type window struct {
 	other uint64
-	until float64
+	until int64
 }
 
 type verifyOut struct {
 	ok     bool
 	reason RejectReason
 	with   FlightID
-	at     float64
+	at     int64
 	wins   []window
 }
 
@@ -339,7 +411,7 @@ func (k *Kernel) verifyAmend(n *Tube, self FlightID) verifyOut {
 				}
 				continue
 			}
-			until := math.Min(to, math.Min(n.End(), x.End()))
+			until := min(to, n.End(), x.End())
 			if r.Conflict {
 				if r.T < limit {
 					return verifyOut{reason: RejConflict, with: id, at: r.T}
@@ -371,10 +443,10 @@ func (k *Kernel) verifyReanchor(n, old *Tube, self FlightID) verifyOut {
 				k.Stats.Alarms++
 				return verifyOut{reason: RejDisagree, with: id, at: r.T}
 			}
-			until := math.Min(to, math.Min(n.End(), x.End()))
+			until := min(to, n.End(), x.End())
 			if r.Conflict {
 				prev, ok := k.windows[mkKey(old.ID, x.ID)]
-				if !ok || r.T < prev-1e-6 {
+				if !ok || r.T < prev {
 					return verifyOut{reason: RejConflict, with: id, at: r.T}
 				}
 				until = r.T
@@ -391,16 +463,23 @@ func (k *Kernel) install(n *Tube, wins []window) {
 	}
 }
 
-func (k *Kernel) reject(reason RejectReason, id, with FlightID, at float64) Verdict {
+// reject and accept build every verdict that the kernel returns. Each passes
+// the verdict to the Recorder.
+func (k *Kernel) reject(reason RejectReason, with FlightID, at int64) Verdict {
 	k.Stats.Rejects[reason]++
-	k.mix(uint64(reason), uint64(id), uint64(with), math.Float64bits(at))
-	return Verdict{Reason: reason, With: with, At: at}
+	return k.verdict(Verdict{Reason: reason, With: with, At: at})
 }
 
-func (k *Kernel) accept(id FlightID, c *Contract) Verdict {
+func (k *Kernel) accept(c *Contract) Verdict {
 	k.Stats.Commits++
-	k.mix(0, uint64(id), c.ID, math.Float64bits(c.End()))
-	return Verdict{OK: true, Contract: c}
+	return k.verdict(Verdict{OK: true, Contract: c})
+}
+
+func (k *Kernel) verdict(v Verdict) Verdict {
+	if k.Rec != nil {
+		k.Rec.Verdict(v)
+	}
+	return v
 }
 
 // Admit commits the entry contract of a new flight. The contract may start in
@@ -410,24 +489,24 @@ func (k *Kernel) Admit(id FlightID, tr *traj.Trajectory) Verdict {
 	k.record(Input{Kind: InAdmit, Flight: id, Traj: tr})
 	k.Stats.Proposals++
 	if k.flights[id] != nil {
-		return k.reject(RejDuplicate, id, 0, 0)
+		return k.reject(RejDuplicate, 0, 0)
 	}
 	if tr.Validate() != nil || tr.End() <= k.now {
-		return k.reject(RejMalformed, id, 0, 0)
+		return k.reject(RejMalformed, 0, 0)
 	}
 	if !k.closed(tr) {
-		return k.reject(RejOpen, id, 0, 0)
+		return k.reject(RejOpen, 0, 0)
 	}
 	c := &Contract{Tube: k.contractTube(id, tr, k.now, k.P.BaseR0())}
 	out := k.verifyAmend(&c.Tube, id)
 	if !out.ok {
-		return k.reject(out.reason, id, out.with, out.at)
+		return k.reject(out.reason, out.with, out.at)
 	}
 	c.ID = k.nextID()
 	k.install(&c.Tube, out.wins)
 	k.flights[id] = &Flight{ID: id, Authority: Automation, Active: c}
 	k.insertOrder(id)
-	return k.accept(id, c)
+	return k.accept(c)
 }
 
 // SetAuthority records a transfer of authority for a flight (I1).
@@ -450,55 +529,53 @@ func (k *Kernel) Propose(id FlightID, tail *traj.Trajectory, by Authority) Verdi
 	k.Stats.Proposals++
 	f := k.flights[id]
 	if f == nil {
-		return k.reject(RejUnknownFlight, id, 0, 0)
+		return k.reject(RejUnknownFlight, 0, 0)
 	}
 	if f.Authority != by {
-		return k.reject(RejAuthority, id, 0, 0)
+		return k.reject(RejAuthority, 0, 0)
 	}
 	if f.Intruder || f.Active == nil {
-		return k.reject(RejIntruder, id, 0, 0)
+		return k.reject(RejIntruder, 0, 0)
 	}
 	if f.PState != PendingNone {
-		return k.reject(RejBusy, id, 0, 0)
+		return k.reject(RejBusy, 0, 0)
 	}
 	if tail.Validate() != nil {
-		return k.reject(RejMalformed, id, 0, 0)
+		return k.reject(RejMalformed, 0, 0)
 	}
 	act := f.Active
 	td := tail.Start()
 	if td < k.now+k.P.MinLead {
-		return k.reject(RejLead, id, 0, 0)
+		return k.reject(RejLead, 0, 0)
 	}
-	if td <= act.Start() || td >= act.End() ||
-		tail.PosAt(td).Dist(act.Traj.PosAt(td)) > 1e-5 {
-		return k.reject(RejMalformed, id, 0, 0)
+	if td <= act.Start() || td >= act.End() || !joins(tail.Legs[0].P0, act.Traj.Pos(td), traj.Join) {
+		return k.reject(RejMalformed, 0, 0)
 	}
-	sg := act.Sigma(td)
-	lo, hi := act.Traj.BandOver(td-sg, td+sg)
+	lo, hi := act.Band(td, 0)
 	if lo != hi {
-		return k.reject(RejVertical, id, 0, 0)
+		return k.reject(RejVertical, 0, 0)
 	}
 	if tail.VSegs[0].A0 != lo {
-		return k.reject(RejMalformed, id, 0, 0)
+		return k.reject(RejMalformed, 0, 0)
 	}
 	if !k.closed(tail) {
-		return k.reject(RejOpen, id, 0, 0)
+		return k.reject(RejOpen, 0, 0)
 	}
 	tr, err := traj.Splice(act.Traj, td, tail)
 	if err != nil {
-		return k.reject(RejMalformed, id, 0, 0)
+		return k.reject(RejMalformed, 0, 0)
 	}
 	// The aircraft may be anywhere inside the old envelope now, so the new
 	// contract inherits the old anchor and radius.
 	c := &Contract{Tube: k.contractTube(id, tr, act.Anchor, act.R0), DivergeAt: td}
 	out := k.verifyAmend(&c.Tube, id)
 	if !out.ok {
-		return k.reject(out.reason, id, out.with, out.at)
+		return k.reject(out.reason, out.with, out.at)
 	}
 	c.ID = k.nextID()
 	k.install(&c.Tube, out.wins)
 	f.Pending, f.PState = c, PendingAwaiting
-	return k.accept(id, c)
+	return k.accept(c)
 }
 
 // ProposeRecontract asks the Verifier to commit a new contract for an
@@ -510,40 +587,39 @@ func (k *Kernel) ProposeRecontract(id FlightID, tr *traj.Trajectory, by Authorit
 	k.Stats.Proposals++
 	f := k.flights[id]
 	if f == nil {
-		return k.reject(RejUnknownFlight, id, 0, 0)
+		return k.reject(RejUnknownFlight, 0, 0)
 	}
 	if f.Authority != by {
-		return k.reject(RejAuthority, id, 0, 0)
+		return k.reject(RejAuthority, 0, 0)
 	}
 	if !f.Intruder || !f.HasTrack {
-		return k.reject(RejIntruder, id, 0, 0)
+		return k.reject(RejIntruder, 0, 0)
 	}
 	if f.PState != PendingNone || f.Active != nil {
-		return k.reject(RejBusy, id, 0, 0)
+		return k.reject(RejBusy, 0, 0)
 	}
 	if tr.Validate() != nil {
-		return k.reject(RejMalformed, id, 0, 0)
+		return k.reject(RejMalformed, 0, 0)
 	}
 	ts := tr.Start()
 	if ts < k.now+k.P.MinLead {
-		return k.reject(RejLead, id, 0, 0)
+		return k.reject(RejLead, 0, 0)
 	}
-	want := f.Track.Pos.Add(f.Track.Vel.Scale(ts - f.Track.T))
-	if tr.PosAt(ts).Dist(want) > k.P.RecontractTol {
-		return k.reject(RejMalformed, id, 0, 0)
+	if !k.startsAtTrack(tr.Legs[0].P0, f.Track, ts) {
+		return k.reject(RejMalformed, 0, 0)
 	}
 	if !k.closed(tr) {
-		return k.reject(RejOpen, id, 0, 0)
+		return k.reject(RejOpen, 0, 0)
 	}
 	c := &Contract{Tube: k.contractTube(id, tr, k.now, k.P.BaseR0()), DivergeAt: ts, Recontract: true}
 	out := k.verifyAmend(&c.Tube, id)
 	if !out.ok {
-		return k.reject(out.reason, id, out.with, out.at)
+		return k.reject(out.reason, out.with, out.at)
 	}
 	c.ID = k.nextID()
 	k.install(&c.Tube, out.wins)
 	f.Pending, f.PState = c, PendingAwaiting
-	return k.accept(id, c)
+	return k.accept(c)
 }
 
 // Ack records that the aircraft acknowledged the pending clearance. The
@@ -600,31 +676,62 @@ func (k *Kernel) DeliveryFailed(id FlightID) {
 	f.PState = PendingUnknown
 }
 
+// joins reports whether the point p (µm) is within tol (µm) of the position
+// at (pm), on each axis.
+func joins(p, at fx.Vec, tol int64) bool {
+	dx := fx.Mul(p.X, fx.M).Sub(fx.Int(at.X))
+	dy := fx.Mul(p.Y, fx.M).Sub(fx.Int(at.Y))
+	lim := fx.Int(tol * fx.M)
+	return dx.Cmp(lim) <= 0 && dx.Cmp(lim.Neg()) >= 0 && dy.Cmp(lim) <= 0 && dy.Cmp(lim.Neg()) >= 0
+}
+
+// startsAtTrack reports whether the point p is within RecontractTol of the
+// position that the track reaches at ts, at its present velocity.
+func (k *Kernel) startsAtTrack(p fx.Vec, tk Track, ts int64) bool {
+	dt := ts - tk.T
+	dx := fx.Mul(p.X-tk.Pos.X, fx.M).Sub(fx.Mul(tk.Vel.X, dt))
+	dy := fx.Mul(p.Y-tk.Pos.Y, fx.M).Sub(fx.Mul(tk.Vel.Y, dt))
+	lim := fx.Int(k.P.RecontractTol * fx.M)
+	if dx.Cmp(lim) > 0 || dx.Cmp(lim.Neg()) < 0 || dy.Cmp(lim) > 0 || dy.Cmp(lim.Neg()) < 0 {
+		return false
+	}
+	return fx.SqSum(dx.Int64(), dy.Int64()).Cmp(fx.Sq(k.P.RecontractTol*fx.M)) <= 0
+}
+
 // inside reports whether tr lies inside the conformance envelope of tb: the
 // protected tube less the detection buffer.
 func (k *Kernel) inside(tb *Tube, tr Track) (bool, ExitCause) {
 	if tr.T > tb.End() {
 		return true, 0
 	}
-	if tr.Pos.Dist(tb.Traj.PosAt(tr.T)) > tb.Radius(tr.T)-k.P.Bh {
+	at := tb.Traj.Pos(tr.T)
+	// A track is inside ±2^60 pm and a position inside ±2^61 pm.
+	dx, dy := tr.Pos.X*fx.M-at.X, tr.Pos.Y*fx.M-at.Y
+	lim := tb.RadiusPM(tr.T).Sub(fx.Mul(k.P.Bh, fx.M))
+	switch {
+	case lim.Sign() < 0:
+		return false, ExitHorizontal
+	case lim.Cmp(fx.Int(fx.MaxReq)) <= 0 && fx.SqSum(dx, dy).Cmp(fx.Sq(lim.Int64())) > 0:
 		return false, ExitHorizontal
 	}
-	sg := tb.Sigma(tr.T)
-	lo, hi := tb.Traj.BandOver(tr.T-sg, tr.T+sg)
+	lo, hi := tb.Band(tr.T, 0)
 	if tr.Alt < lo-k.P.VTol || tr.Alt > hi+k.P.VTol {
 		return false, ExitVertical
 	}
 	return true, 0
 }
 
+// intentSlack is how far a selected altitude may lie outside the levels of
+// the contract (µm).
+const intentSlack = 50 * fx.FT
+
 // intentOK reports whether the broadcast selected altitude agrees with tb.
 func (k *Kernel) intentOK(tb *Tube, tr Track) bool {
-	if !k.P.IntentCheck || math.IsNaN(tr.SelAlt) || tr.T > tb.End() {
+	if !k.P.IntentCheck || !tr.HasSel || tr.T > tb.End() {
 		return true
 	}
-	sg := tb.Sigma(tr.T)
-	lo, hi := tb.Traj.BandOver(tr.T-sg, tr.T+sg+k.P.IntentLookahead)
-	return tr.SelAlt >= lo-50 && tr.SelAlt <= hi+50
+	lo, hi := tb.Band(tr.T, k.P.IntentLookahead)
+	return tr.SelAlt >= lo-intentSlack && tr.SelAlt <= hi+intentSlack
 }
 
 // InsideAny reports whether tr lies inside the conformance envelope of any
@@ -648,8 +755,13 @@ func (k *Kernel) InsideAny(id FlightID, tr Track) bool {
 	return false
 }
 
+// recontractGrace is how long after the start of its new contract an intruder
+// may still be outside it (µs).
+const recontractGrace = 30 * fx.Sec
+
 // UpdateTrack is the Conformance Monitor. It compares one surveillance report
-// with the contracts of the flight.
+// with the contracts of the flight. A report for a flight that is not in the
+// Store, or a report that is not valid, has no effect.
 //
 //   - An aircraft outside every contract it may fly becomes an intruder.
 //   - With a pending amendment in state unknown, the first report that lies
@@ -659,7 +771,7 @@ func (k *Kernel) InsideAny(id FlightID, tr Track) bool {
 func (k *Kernel) UpdateTrack(id FlightID, tr Track) {
 	k.record(Input{Kind: InTrack, Flight: id, Track: tr})
 	f := k.flights[id]
-	if f == nil {
+	if f == nil || !tr.Valid() {
 		return
 	}
 	f.Track, f.HasTrack = tr, true
@@ -670,7 +782,7 @@ func (k *Kernel) UpdateTrack(id FlightID, tr Track) {
 				k.Stats.RecontractOK++
 				return
 			}
-			if tr.T > f.Active.Start()+30 {
+			if tr.T > f.Active.Start()+recontractGrace {
 				k.removeTube(&f.Active.Tube)
 				f.Active = nil
 				k.Stats.RecontractFailed++
@@ -736,28 +848,40 @@ func (k *Kernel) markIntruder(f *Flight, cause ExitCause) {
 	}
 }
 
+// The altitude rules of an intruder tube (µm, µm/s).
+const (
+	levelRate  = 5 * fx.FT    // below this vertical rate the aircraft holds a level
+	levelSnap  = 150 * fx.FT  // a level this close to a cardinal level counts as that level
+	levelGrid  = 1000 * fx.FT // cardinal levels
+	selAltGate = 150 * fx.FT  // a selected altitude further than this from the altitude is a target
+)
+
 // intruderTube builds a state-based tube from the last track: a straight line
 // at the current velocity, with a radius that grows fast. The vertical extent
 // runs from the current altitude to the altitude the aircraft is heading for.
+//
+// The track is valid, and the intruder horizon is at most maxIntruderHorizon.
+// So the tube is inside the limits of a valid trajectory.
 func (k *Kernel) intruderTube(f *Flight) *Tube {
 	tr := f.Track
 	end := tr.T + k.P.IntruderHorizon
 	lo, hi := tr.Alt, tr.Alt
 	vu := k.P.VTol
-	level := math.Abs(tr.VRate) < 5
-	sel := tr.SelAlt
 	switch {
-	case !math.IsNaN(sel) && math.Abs(sel-tr.Alt) > 150:
-		lo, hi = math.Min(tr.Alt, sel), math.Max(tr.Alt, sel)
+	case tr.HasSel && fx.Abs(tr.SelAlt-tr.Alt) > selAltGate:
+		lo, hi = min(tr.Alt, tr.SelAlt), max(tr.Alt, tr.SelAlt)
 		vu = k.P.IntruderVU
-	case level:
+	case fx.Abs(tr.VRate) < levelRate:
 		// Holding a level: snap to it, so that adjacent levels stay usable.
-		if n := math.Round(tr.Alt/1000) * 1000; math.Abs(n-tr.Alt) <= 150 {
+		// The nearest cardinal level; half-way rounds up.
+		n, _ := fx.Int(tr.Alt + levelGrid/2).DivFloor(levelGrid)
+		if n *= levelGrid; fx.Abs(n-tr.Alt) <= levelSnap {
 			lo, hi = n, n
 		}
 	default:
-		tgt := tr.Alt + tr.VRate*k.P.IntruderHorizon
-		lo, hi = math.Min(tr.Alt, tgt), math.Max(tr.Alt, tgt)
+		climb, _ := fx.Mul(tr.VRate, k.P.IntruderHorizon).DivFloor(fx.M)
+		tgt := tr.Alt + climb
+		lo, hi = min(tr.Alt, tgt), max(tr.Alt, tgt)
 		vu = k.P.IntruderVU
 	}
 	t := &traj.Trajectory{
@@ -766,14 +890,14 @@ func (k *Kernel) intruderTube(f *Flight) *Tube {
 	}
 	return &Tube{
 		ID: k.nextID(), Flight: f.ID, Traj: t, Anchor: tr.T,
-		R0: k.P.IntruderR0, K: k.P.IntruderK, VU0: vu, VMin: tr.Vel.Norm(), Intruder: true,
+		R0: k.P.IntruderR0, K: k.P.IntruderK, VU0: vu, VMin: fx.Speed(tr.Vel), Intruder: true,
 	}
 }
 
 // Reanchored reports one accepted re-anchor.
 type Reanchored struct {
 	ID       FlightID
-	Dt       float64 // the contract times moved by -Dt
+	Dt       int64 // the contract times moved by −Dt (µs)
 	Old, New *traj.Trajectory
 }
 
@@ -783,6 +907,8 @@ type Reanchored struct {
 // and has a track taken at the current time. The new contract has the same
 // path. Its times move so that the nominal position matches the along-track
 // position of the aircraft, and its radius restarts from the base value.
+// The shift is a whole number of microseconds, so the new contract has
+// exactly the path of the old one.
 func (k *Kernel) ReanchorAll() []Reanchored {
 	k.record(Input{Kind: InReanchor})
 	var done []Reanchored
@@ -794,18 +920,31 @@ func (k *Kernel) ReanchorAll() []Reanchored {
 		}
 		act := f.Active
 		leg := act.Traj.LegAt(k.now)
-		sp := leg.Speed()
-		if sp <= 0 {
+		vsq := leg.V.X*leg.V.X + leg.V.Y*leg.V.Y // at most 2^61
+		if vsq == 0 {
 			continue
 		}
-		along := f.Track.Pos.Sub(act.Traj.PosAt(k.now)).Dot(leg.V.Scale(1 / sp))
-		dt := along / sp
+		// The along-track offset of the track from the nominal position, as
+		// a time: (offset · v) / |v|², rounded down. In picometres times
+		// micrometres per second, over micrometres squared per second
+		// squared, it is in microseconds.
+		at := act.Traj.Pos(k.now)
+		dx, dy := f.Track.Pos.X*fx.M-at.X, f.Track.Pos.Y*fx.M-at.Y
+		dt, ok := fx.Mul(dx, leg.V.X).Add(fx.Mul(dy, leg.V.Y)).DivFloor(vsq)
+		if !ok || dt < -fx.MaxTime || dt > fx.MaxTime {
+			continue
+		}
 		tr := act.Traj.Shift(-dt)
+		if tr.Validate() != nil || k.now < tr.Start() || k.now >= tr.End() {
+			// The shift moved the contract outside the valid times, or away
+			// from the current time. A leg with almost no speed can do that:
+			// a small offset is then a long time. The old contract stays.
+			continue
+		}
 		c := &Contract{Tube: k.contractTube(id, tr, k.now, k.P.BaseR0()), DivergeAt: act.DivergeAt - dt}
 		out := k.verifyReanchor(&c.Tube, &act.Tube, id)
 		if !out.ok {
 			k.Stats.ReanchorRejected++
-			k.mix(1, uint64(id), uint64(out.with), math.Float64bits(out.at))
 			continue
 		}
 		c.ID = k.nextID()
@@ -813,7 +952,6 @@ func (k *Kernel) ReanchorAll() []Reanchored {
 		k.install(&c.Tube, out.wins)
 		f.Active = c
 		k.Stats.ReanchorOK++
-		k.mix(2, uint64(id), c.ID, math.Float64bits(dt))
 		done = append(done, Reanchored{ID: id, Dt: dt, Old: act.Traj, New: tr})
 	}
 	return done
@@ -848,7 +986,7 @@ func (k *Kernel) Tick() {
 	sp := k.sep()
 	to := k.now + k.P.Horizon
 	k.conflicts = k.conflicts[:0]
-	k.coast = math.Inf(1)
+	k.coast = fx.NoLimit
 
 	tubes := k.scratch[:0]
 	for _, id := range k.order {
@@ -859,13 +997,13 @@ func (k *Kernel) Tick() {
 			if a.Flight == b.Flight {
 				continue
 			}
-			target := math.Min(to, math.Min(a.End(), b.End()))
+			target := min(to, a.End(), b.End())
 			key := mkKey(a.ID, b.ID)
 			u := k.windows[key]
 			if u >= target-k.P.ExtendSlack && u >= k.now {
 				continue
 			}
-			from := math.Max(u, k.now)
+			from := max(u, k.now)
 			if from >= target {
 				continue
 			}
@@ -879,7 +1017,7 @@ func (k *Kernel) Tick() {
 			}
 			k.windows[key] = r.T
 			k.conflicts = append(k.conflicts, Conflict{A: a.Flight, B: b.Flight, T: r.T})
-			k.coast = math.Min(k.coast, r.T-k.now)
+			k.coast = min(k.coast, r.T-k.now)
 		}
 	}
 	for _, gid := range k.order {
@@ -902,16 +1040,21 @@ func (k *Kernel) Tick() {
 	}
 	k.scratch = tubes[:0]
 
-	// One entry per ordered pair, soonest first.
-	sort.Slice(k.conflicts, func(i, j int) bool {
+	// One entry for each ordered pair: the earliest, and of two at the same
+	// time the one between two contracts. Then by time; entries with the same
+	// time stay in order of A, then of B. Each sort is stable and has a total
+	// order, so that every implementation of the kernel gives the same list.
+	sort.SliceStable(k.conflicts, func(i, j int) bool {
 		a, b := k.conflicts[i], k.conflicts[j]
-		if a.A != b.A {
+		switch {
+		case a.A != b.A:
 			return a.A < b.A
-		}
-		if a.B != b.B {
+		case a.B != b.B:
 			return a.B < b.B
+		case a.T != b.T:
+			return a.T < b.T
 		}
-		return a.T < b.T
+		return !a.Intruder && b.Intruder
 	})
 	out := k.conflicts[:0]
 	for i, c := range k.conflicts {
@@ -939,7 +1082,7 @@ func (k *Kernel) PairState(a, b FlightID) PairStatus {
 	nb := copy(tb[:], contractTubes(nil, fb))
 	for _, x := range ta[:na] {
 		for _, y := range tb[:nb] {
-			if k.now < math.Max(x.Start(), y.Start()) || k.now > math.Min(x.End(), y.End()) {
+			if k.now < max(x.Start(), y.Start()) || k.now > min(x.End(), y.End()) {
 				continue
 			}
 			if u, ok := k.windows[mkKey(x.ID, y.ID)]; !ok || u < k.now {
@@ -952,36 +1095,26 @@ func (k *Kernel) PairState(a, b FlightID) PairStatus {
 
 // PairWindow returns the earliest end of a verified window between the
 // contracts of two flights: the time until which the kernel asserts that the
-// two are separated. It returns +Inf if no window applies.
-func (k *Kernel) PairWindow(a, b FlightID) float64 {
+// two are separated. It returns fx.NoLimit if no window applies.
+func (k *Kernel) PairWindow(a, b FlightID) int64 {
 	fa, fb := k.flights[a], k.flights[b]
-	least := math.Inf(1)
+	least := int64(fx.NoLimit)
 	if fa == nil || fb == nil {
 		return least
 	}
 	for _, x := range contractTubes(nil, fa) {
 		for _, y := range contractTubes(nil, fb) {
-			end := math.Min(x.End(), y.End())
-			if k.now < math.Max(x.Start(), y.Start()) || k.now > end {
+			end := min(x.End(), y.End())
+			if k.now < max(x.Start(), y.Start()) || k.now > end {
 				continue
 			}
 			// A window that reaches the end of either contract has no limit.
 			if u, ok := k.windows[mkKey(x.ID, y.ID)]; !ok {
 				return k.now
 			} else if u < end {
-				least = math.Min(least, u)
+				least = min(least, u)
 			}
 		}
 	}
 	return least
-}
-
-func (k *Kernel) mix(vals ...uint64) {
-	for _, v := range vals {
-		for i := 0; i < 8; i++ {
-			k.outHash ^= v & 0xff
-			k.outHash *= 1099511628211
-			v >>= 8
-		}
-	}
 }

@@ -1,8 +1,16 @@
 # Binaries from `go build ./cmd/...` at the repository root.
 /atcsim
 /atcviz
+/conform
+/record
 *.test
 *.out
 
 # Python byte code.
 __pycache__/
+
+# Signing keys and kernel records (docs/record.md). A private key must never
+# be committed. A record is large.
+*.key
+*.rec
+!/conformance/*.rec

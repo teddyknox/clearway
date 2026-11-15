@@ -3,6 +3,8 @@ package sim
 import (
 	"math"
 
+	"github.com/teddyknox/clearway/internal/conv"
+	"github.com/teddyknox/clearway/internal/ftraj"
 	"github.com/teddyknox/clearway/internal/geom"
 	"github.com/teddyknox/clearway/internal/kernel"
 	"github.com/teddyknox/clearway/internal/traj"
@@ -44,10 +46,10 @@ type aircraft struct {
 	id  kernel.FlightID
 	arr *arrival
 
-	flown     *traj.Trajectory
+	flown     *path
 	tau       float64 // progress along flown, in trajectory time
 	mode      int
-	pendingRe *traj.Trajectory // a re-contract received and not yet started
+	pendingRe *path // a re-contract received and not yet started
 
 	pos, vel           geom.Vec2
 	alt, vrate, selAlt float64
@@ -66,7 +68,20 @@ type aircraft struct {
 	amendments int
 }
 
-func newAircraft(a *arrival, tr *traj.Trajectory, transit float64) *aircraft {
+// path is a trajectory of the kernel together with its form in floating
+// point, which the aircraft flies. k names the trajectory: the simulator
+// compares it with the contracts of the kernel.
+type path struct {
+	k *traj.Trajectory
+	*ftraj.Trajectory
+}
+
+func newPath(k *traj.Trajectory) *path { return &path{k, conv.Float(k)} }
+
+// flies reports whether p is the kernel trajectory k.
+func (p *path) flies(k *traj.Trajectory) bool { return p != nil && p.k == k }
+
+func newAircraft(a *arrival, tr *path, transit float64) *aircraft {
 	t0 := tr.Start()
 	ac := &aircraft{
 		id: a.id, arr: a, flown: tr, tau: t0, startT: t0,
@@ -155,8 +170,17 @@ func (ac *aircraft) tactical(target, now float64) {
 	ac.freeTarget = target
 }
 
+// track returns the surveillance report of the aircraft at now, in the
+// integers of the kernel.
 func (ac *aircraft) track(now float64) kernel.Track {
-	return kernel.Track{T: now, Pos: ac.pos, Vel: ac.vel, Alt: ac.alt, VRate: ac.vrate, SelAlt: ac.selAlt}
+	tk := kernel.Track{
+		T: conv.Time(now), Pos: conv.Point(ac.pos), Vel: conv.Vel(ac.vel),
+		Alt: conv.Alt(ac.alt), VRate: conv.VRate(ac.vrate),
+	}
+	if !math.IsNaN(ac.selAlt) {
+		tk.HasSel, tk.SelAlt = true, conv.Alt(ac.selAlt)
+	}
+	return tk
 }
 
 // done reports whether the flight has reached the end of its contract or has

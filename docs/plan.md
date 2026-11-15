@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Status | Draft 0.1, 2026-11-14 |
+| Status | Draft 0.1, 2026-11-15 |
 | Covers | December 2026 to November 2029 |
 | Reads with | [pitch.md](pitch.md) for the target, [gap-analysis.md](gap-analysis.md) for the starting point |
 
-**Progress.** 2026-11-14: [specification 0.1](spec.md) and the [conformance suite](../conformance/README.md) exist. The specification is in prose only. The first period still owes the formal statement.
+**Progress.** 2026-11-15: [specification 0.2](spec.md) and the [conformance suite](../conformance/README.md) exist. The specification is in prose only. The first period still owes the formal statement. [The record](record.md) exists: the input log is chained by hash, checkpoints are signed, and `cmd/record` checks and replays a record. The kernel computes with integers only, and it is published as one executable file for a fixed instruction set, the kernel program, with the machine that runs it ([vm.md](vm.md)). So a record has one replay on every machine. A second kernel, in Rust, reproduces the records of the first, in Go. One author wrote both: the plan's four Verifiers by four teams are still owed. Two records are published as kernel vectors. The first period still owes the assumption monitors and automatic demotion.
 
 **Conventions.** A date is the last day on which a thing can become true and still serve the pitch. Staffing and reachability are my estimates, and they are rough. Section 9 lists the outside facts that were checked for this draft.
 

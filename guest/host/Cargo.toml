@@ -1,0 +1,12 @@
+[package]
+name = "clearway-kernel-host"
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+clearway-kernel = { path = "../kernel" }
+
+[[bin]]
+name = "kernel-host"
+path = "src/main.rs"

@@ -90,9 +90,9 @@ Each row is a claim in the pitch, what must exist for it to be true, and where t
 | Claim | What must exist | Today |
 |---|---|---|
 | A machine-checked proof, checked again by outsiders | A formal specification of the kernel, a proof of its invariants, and two reviewers outside the project | Tests and a brute-force oracle |
-| Four Verifiers by four teams that never met | A specification that others can build from, a conformance suite, and three more authors | Specification 0.1 and a suite of 588 vectors. Two implementations by one author |
+| Four Verifiers by four teams that never met | A specification that others can build from, a conformance suite, and three more authors | Specification 0.2 and a suite of 628 vectors. Two implementations by one author, and the whole kernel a second time in another language |
 | Two years of shadow at twenty centers | Access to live surveillance and flight data, an agreement with the FAA, and a recorder that runs without a break | A simulator. No access to data |
-| Outsiders replayed the public record | A hash-chained log, signed checkpoints, a public replay tool, and witnesses who take it up | Replay and a state digest |
+| Outsiders replayed the public record | A hash-chained log, signed checkpoints, a public replay tool, and witnesses who take it up | [The record](record.md) and a tool that checks and replays it. One signer and no witness. The kernel is one executable file of integer arithmetic for a fixed instruction set ([vm.md](vm.md)), so a record has one replay on every machine |
 | The kernel would have refused most recorded losses | Recorded losses of separation, matched with the clearances that led to them | None |
 | The airspace check found 312 pairs | The national route and procedure data in the Airspace Model, and the static check | Neither |
 | The envelope was measured | Recorded tracks matched with what each aircraft was cleared to fly, and a published method | The simulator makes it true |

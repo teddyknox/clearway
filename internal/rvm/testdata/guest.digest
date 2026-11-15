@@ -1,0 +1,9 @@
+# The result of the guest workload with seed 1 on guest.elf; see
+# internal/rvm/determinism_test.go. A machine that gives another result is
+# not the machine of this package.
+# RVM_REBUILD_GUEST=1 go test ./internal/rvm/ writes this file. Do not edit it.
+program 678afe3fc5fb4830f935e7a83558a8a32eb3396c3beb842ee724cbae7a818d82
+input   084a8c2dcb39249744669d04ad77ea4b7c289cecd47fc00526cc749bdc0cd242
+output  6d1b19495fc344802440ef636abac6a973e5cd6d8caeea83ef77ff1b7a64ad12
+steps   19808537
+state   7e6a0041e7123ad05a594f9abcc291c5f31a11e19732d7819783b30e7c9b4404

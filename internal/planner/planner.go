@@ -4,6 +4,10 @@
 //
 // Nothing here is trusted. Every proposal goes through kernel.Propose, and the
 // kernel decides.
+//
+// A planner works in floating point: nautical miles, feet, seconds. The
+// kernel works in integers. A proposal is converted once, by package conv, on
+// its way into the kernel, and a contract is converted back for planning.
 package planner
 
 import (
@@ -11,6 +15,8 @@ import (
 	"math/rand/v2"
 	"sort"
 
+	"github.com/teddyknox/clearway/internal/conv"
+	"github.com/teddyknox/clearway/internal/ftraj"
 	"github.com/teddyknox/clearway/internal/geom"
 	"github.com/teddyknox/clearway/internal/kernel"
 	"github.com/teddyknox/clearway/internal/traj"
@@ -39,16 +45,31 @@ type Env struct {
 	MaxLevel float64
 	OnCommit func(id kernel.FlightID, c *kernel.Contract, source string)
 	// OnPropose, if set, sees every proposal and the kernel's verdict.
-	OnPropose func(id kernel.FlightID, tr *traj.Trajectory, source string, v kernel.Verdict)
+	OnPropose func(id kernel.FlightID, tr *ftraj.Trajectory, source string, v kernel.Verdict)
 	Stats     map[string]*Counter
 
 	handled map[kernel.FlightID]bool
 	lastTry map[[2]kernel.FlightID]float64
+	floats  map[*traj.Trajectory]*ftraj.Trajectory // contracts in floating point, for this step
+}
+
+// now returns the kernel's clock in seconds.
+func (e *Env) now() float64 { return conv.Sec(e.K.Now()) }
+
+// float returns a trajectory of the kernel in floating point.
+func (e *Env) float(tr *traj.Trajectory) *ftraj.Trajectory {
+	f := e.floats[tr]
+	if f == nil {
+		f = conv.Float(tr)
+		e.floats[tr] = f
+	}
+	return f
 }
 
 // Begin starts a planning step.
 func (e *Env) Begin() {
 	e.handled = map[kernel.FlightID]bool{}
+	e.floats = map[*traj.Trajectory]*ftraj.Trajectory{}
 	if e.lastTry == nil {
 		e.lastTry = map[[2]kernel.FlightID]float64{}
 	}
@@ -66,10 +87,10 @@ func (e *Env) stat(source string) *Counter {
 	return c
 }
 
-func (e *Env) propose(id kernel.FlightID, tail *traj.Trajectory, source string) bool {
+func (e *Env) propose(id kernel.FlightID, tail *ftraj.Trajectory, source string) bool {
 	c := e.stat(source)
 	c.Proposed++
-	v := e.K.Propose(id, tail, kernel.Automation)
+	v := e.K.Propose(id, conv.Traj(tail), kernel.Automation)
 	if e.OnPropose != nil {
 		e.OnPropose(id, tail, source, v)
 	}
@@ -84,23 +105,24 @@ func (e *Env) propose(id kernel.FlightID, tail *traj.Trajectory, source string) 
 
 type cand struct {
 	id   kernel.FlightID
-	tail *traj.Trajectory
+	tail *ftraj.Trajectory
 	cost float64
 }
 
-func build(td float64, pts []geom.Vec2, speeds []float64, a0, a1 float64) *traj.Trajectory {
-	legs := traj.Route(td, pts, speeds)
+func build(td float64, pts []geom.Vec2, speeds []float64, a0, a1 float64) *ftraj.Trajectory {
+	legs := ftraj.Route(td, pts, speeds)
 	if len(legs) == 0 {
 		return nil
 	}
 	end := legs[len(legs)-1].T1
-	return &traj.Trajectory{Legs: legs, VSegs: traj.Step(td, end, a0, td, a1, ClimbRate)}
+	return &ftraj.Trajectory{Legs: legs, VSegs: ftraj.Step(td, end, a0, td, a1, ClimbRate)}
 }
 
 // remaining returns the path of the active contract after td.
-func remaining(act *kernel.Contract, td float64) (pts []geom.Vec2, speeds []float64) {
-	pts = []geom.Vec2{act.Traj.PosAt(td)}
-	for _, l := range act.Traj.Legs {
+func (e *Env) remaining(act *kernel.Contract, td float64) (pts []geom.Vec2, speeds []float64) {
+	tr := e.float(act.Traj)
+	pts = []geom.Vec2{tr.PosAt(td)}
+	for _, l := range tr.Legs {
 		if l.T1 <= td {
 			continue
 		}
@@ -118,16 +140,15 @@ func (e *Env) movable(id kernel.FlightID, before float64) (*kernel.Flight, float
 		f.Authority != kernel.Automation || e.NoComm[id] || e.handled[id] {
 		return nil, 0, 0, false
 	}
-	td := e.K.Now() + e.Lead
-	if td >= f.Active.End()-30 || td <= f.Active.Start() || td >= before {
+	td := e.now() + e.Lead
+	if td >= conv.Sec(f.Active.End())-30 || td <= conv.Sec(f.Active.Start()) || td >= before {
 		return nil, 0, 0, false
 	}
-	sg := f.Active.Sigma(td)
-	lo, hi := f.Active.Traj.BandOver(td-sg, td+sg)
+	lo, hi := f.Active.Band(conv.Time(td), 0)
 	if lo != hi {
 		return nil, 0, 0, false
 	}
-	return f, td, lo, true
+	return f, td, conv.Ft(lo), true
 }
 
 // Manoeuvre kinds and their magnitudes, in the order a source prefers them.
@@ -155,8 +176,8 @@ var fallbackOptions = []option{
 	{"speed", 0.90, 6}, {"speed", 1.10, 6},
 }
 
-func (e *Env) tail(f *kernel.Flight, td, level float64, o option) *traj.Trajectory {
-	pts, speeds := remaining(f.Active, td)
+func (e *Env) tail(f *kernel.Flight, td, level float64, o option) *ftraj.Trajectory {
+	pts, speeds := e.remaining(f.Active, td)
 	if len(speeds) == 0 {
 		return nil
 	}
@@ -197,7 +218,7 @@ func (e *Env) resolve(c kernel.Conflict, opts []option, source string, maxTries 
 	}
 	var cands []cand
 	for _, id := range ids {
-		f, td, level, ok := e.movable(id, c.T)
+		f, td, level, ok := e.movable(id, conv.Sec(c.T))
 		if !ok {
 			continue
 		}
@@ -229,9 +250,9 @@ type Heuristic struct {
 }
 
 func (h *Heuristic) Act(e *Env) {
-	now := e.K.Now()
+	now := e.now()
 	for _, c := range e.K.Conflicts() {
-		if c.T-now > h.ActAt {
+		if conv.Sec(c.T)-now > h.ActAt {
 			continue
 		}
 		key := [2]kernel.FlightID{c.A, c.B}
@@ -250,9 +271,9 @@ type Fallback struct {
 }
 
 func (fb *Fallback) Act(e *Env) {
-	now := e.K.Now()
+	now := e.now()
 	for _, c := range e.K.Conflicts() {
-		if c.T-now > fb.At {
+		if conv.Sec(c.T)-now > fb.At {
 			continue
 		}
 		e.resolve(c, fallbackOptions, "fallback", 24)
@@ -262,7 +283,7 @@ func (fb *Fallback) Act(e *Env) {
 // Recontract proposes a new contract for every intruder that can receive one:
 // direct to its exit point, at the level it is at or is heading for.
 func Recontract(e *Env) {
-	now := e.K.Now()
+	now := e.now()
 	for _, id := range e.K.IDs() {
 		f := e.K.Flight(id)
 		plan := e.Plans[id]
@@ -275,21 +296,24 @@ func Recontract(e *Env) {
 			continue
 		}
 		e.lastTry[key] = now
-		tk := f.Track
-		if tk.Pos.Norm() > e.K.P.CellRadius && tk.Pos.Dot(tk.Vel) > 0 {
+		// The last track, in nautical miles, feet, and seconds.
+		pos, vel := conv.NMPoint(f.Track.Pos), conv.NMVel(f.Track.Vel)
+		alt, vrate, at := conv.Ft(f.Track.Alt), conv.Ftps(f.Track.VRate), conv.Sec(f.Track.T)
+		if pos.Norm() > conv.NM(e.K.P.CellRadius) && pos.Dot(vel) > 0 {
 			continue // leaving the cell
 		}
 		ts := now + e.Lead
-		p0 := tk.Pos.Add(tk.Vel.Scale(ts - tk.T))
-		a0 := tk.Alt + tk.VRate*(ts-tk.T)
+		p0 := pos.Add(vel.Scale(ts - at))
+		a0 := alt + vrate*(ts-at)
 		heading := a0
-		if !math.IsNaN(tk.SelAlt) {
-			heading = tk.SelAlt
-			if (tk.VRate >= 0 && a0 > tk.SelAlt) || (tk.VRate <= 0 && a0 < tk.SelAlt) {
-				a0 = tk.SelAlt
+		if f.Track.HasSel {
+			sel := conv.Ft(f.Track.SelAlt)
+			heading = sel
+			if (vrate >= 0 && a0 > sel) || (vrate <= 0 && a0 < sel) {
+				a0 = sel
 			}
 		}
-		speed := tk.Vel.Norm()
+		speed := vel.Norm()
 		if speed < 380*geom.Kt || speed > 540*geom.Kt {
 			speed = plan.Speed
 		}
@@ -305,7 +329,7 @@ func Recontract(e *Env) {
 				break
 			}
 			c.Proposed++
-			v := e.K.ProposeRecontract(id, tr, kernel.Automation)
+			v := e.K.ProposeRecontract(id, conv.Traj(tr), kernel.Automation)
 			if e.OnPropose != nil {
 				e.OnPropose(id, tr, "recontract", v)
 			}
@@ -332,7 +356,8 @@ type Chaos struct {
 }
 
 func (c *Chaos) Act(e *Env) {
-	now := e.K.Now()
+	now := e.now()
+	radius := conv.NM(e.K.P.CellRadius)
 	ids := e.K.IDs()
 	n := int(c.Rate)
 	if c.R.Float64() < c.Rate-float64(n) {
@@ -349,23 +374,24 @@ func (c *Chaos) Act(e *Env) {
 		if c.R.Float64() < 0.05 {
 			td = now + 30 // too late to deliver
 		}
-		if td >= f.Active.End()-30 || td <= f.Active.Start() {
+		if td >= conv.Sec(f.Active.End())-30 || td <= conv.Sec(f.Active.Start()) {
 			continue
 		}
-		p0 := f.Active.Traj.PosAt(td)
-		level := f.Active.Traj.AltAt(td)
+		active := e.float(f.Active.Traj)
+		p0 := active.PosAt(td)
+		level := active.AltAt(td)
 		speed := plan.Speed
 		anyLevel := e.MinLevel + 1000*float64(c.R.IntN(int((e.MaxLevel-e.MinLevel)/1000)+1))
-		var tail *traj.Trajectory
+		var tail *ftraj.Trajectory
 		switch c.R.IntN(6) {
 		case 0: // a random level
-			pts, speeds := remaining(f.Active, td)
+			pts, speeds := e.remaining(f.Active, td)
 			tail = build(td, pts, speeds, level, anyLevel)
 		case 1: // a random detour
-			via := geom.Polar(c.R.Float64()*e.K.P.CellRadius, c.R.Float64()*2*math.Pi)
+			via := geom.Polar(c.R.Float64()*radius, c.R.Float64()*2*math.Pi)
 			tail = build(td, []geom.Vec2{p0, via, plan.Exit}, []float64{speed, speed}, level, level)
 		case 2: // a random speed
-			pts, speeds := remaining(f.Active, td)
+			pts, speeds := e.remaining(f.Active, td)
 			k := 0.85 + 0.3*c.R.Float64()
 			for i := range speeds {
 				speeds[i] *= k
@@ -377,14 +403,15 @@ func (c *Chaos) Act(e *Env) {
 				continue
 			}
 			meet := td + 120 + c.R.Float64()*400
-			via := other.Active.Traj.PosAt(meet)
+			theirs := e.float(other.Active.Traj)
+			via := theirs.PosAt(meet)
 			sp := p0.Dist(via) / (meet - td)
 			if sp < 300*geom.Kt || sp > 600*geom.Kt {
 				sp = speed
 			}
-			tail = build(td, []geom.Vec2{p0, via, plan.Exit}, []float64{sp, speed}, level, other.Active.Traj.AltAt(meet))
+			tail = build(td, []geom.Vec2{p0, via, plan.Exit}, []float64{sp, speed}, level, theirs.AltAt(meet))
 		case 4: // an open contract: it ends inside the cell
-			end := geom.Polar(c.R.Float64()*e.K.P.CellRadius*0.8, c.R.Float64()*2*math.Pi)
+			end := geom.Polar(c.R.Float64()*radius*0.8, c.R.Float64()*2*math.Pi)
 			tail = build(td, []geom.Vec2{p0, end}, []float64{speed}, level, level)
 		case 5: // a tail that does not connect
 			tail = build(td, []geom.Vec2{p0.Add(geom.Vec2{X: 3}), plan.Exit}, []float64{speed}, level, anyLevel)
@@ -401,7 +428,7 @@ func (c *Chaos) Act(e *Env) {
 		if !cf.Intruder && c.R.Float64() < 0.5 {
 			id = cf.B
 		}
-		f, td, level, ok := e.movable(id, cf.T)
+		f, td, level, ok := e.movable(id, conv.Sec(cf.T))
 		if !ok {
 			continue
 		}

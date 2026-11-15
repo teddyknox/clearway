@@ -2,10 +2,12 @@
 
 | | |
 |---|---|
-| Status | Draft 0.1, 2026-11-14 |
+| Status | Draft 0.1, 2026-11-15 |
 | Scope | Architecture, safety approach, migration path. No cost estimate. |
 | Standing | Independent design study. Not an FAA document. |
 | Specification | [spec.md](spec.md): the exact definition of a tube, of separation, and of what a Verifier must do |
+| Record | [record.md](record.md): the record of what a kernel decided, and what a party outside the operator can check in it |
+| Machine | [vm.md](vm.md): the one machine that runs the kernel, and the one program that is the kernel |
 | Prototype | [prototype.md](prototype.md): the kernel of section 6 for one en route cell, with simulation results. Changes that it forced are marked "(prototype)". [gap-analysis.md](gap-analysis.md) lists what separates it from this design. |
 
 **Conventions.** A dagger (†) marks an initial design value. Simulation must confirm or replace it. Section 17 separates the sources checked for this draft from prior art cited from general knowledge.
@@ -532,6 +534,13 @@ The second rule costs liveness: one faulty implementation blocks every commit. T
 
 **Quorum certificate.** A committed clearance carries the signatures of the replicas that committed it. The Gateway at the radio site checks them and delivers nothing without them. A compromised kernel host therefore cannot issue a clearance alone. Where the link standard allows it, the aircraft or its operator can check the same signatures.
 
+**One kernel program for every replica.** Replicas vote on bits, and a record is replayed bit for bit. So the same inputs must give the same bits on every replica and on the machine of every outside party. Two rules make that so. (prototype)
+
+- *Integers only.* The kernel computes with whole numbers: micrometres, microseconds, micrometres per second. Floating point rounds, and how it rounds can depend on the processor and on the compiler. The specification states each rule as a comparison of exact integers, so each rule has one answer.
+- *One kernel program, one machine.* The kernel is released as one executable file, the *kernel program*, for one small instruction set (RISC-V, with no floating point). Every party runs those bytes in a small virtual machine that is defined completely ([vm.md](vm.md)). The hash of the kernel program names the release. The signers of a release (below) sign that hash. A replica's own processor and compiler then decide nothing.
+
+These rules make replicas agree. They do not make the kernel right: a defect in the kernel program is on every replica. The Verifier implementations of different kinds, inside the kernel program, are the answer to that.
+
 **A record that others can check.** The kernel is a deterministic state machine. One input log, replayed, gives one state and one sequence of verdicts.
 
 - Each cell chains its input log by hash.
@@ -539,7 +548,7 @@ The second rule costs liveness: one faulty implementation blocks every commit. T
 - The checkpoints go to witnesses outside the program, for example the accident investigator and the safety oversight office, and are published.
 - A party that holds the log can confirm that it matches the checkpoints, replay the kernel, and check every verdict. The kernel source is public (section 13), so that party does not need the operator's help.
 
-The prototype has the replay and the state digest. It has no hash chain, no signatures, and one replica.
+The prototype writes this record and checks it ([record.md](record.md)): the chain, the signed checkpoints, the comparison with checkpoints that a witness holds, and the replay. It has one replica and one signer, and nothing yet sends a checkpoint to a witness. A replay on another machine gives the same bits. The first kernel of the prototype computed in floating point, and its first replay on a second type of processor failed. The kernel now follows the two rules above, and the prototype holds a second kernel in another language, built as the kernel program, that reproduces the records of the first.
 
 **Several signers for a release.** A release of Tier A code, of the Airspace Model, or of the envelope parameters takes effect only with signatures from parties in different organizations: for example the program, the safety oversight office, and the operating facility. Staged release (section 9.4) then limits what a bad release can do if it passes all of them.
 
@@ -695,6 +704,7 @@ This repository has taken the first steps: the Apache License 2.0, a notice that
 | CAP shape | Government-owned kernel specification and open interfaces. | A single-vendor platform makes the two-implementation Verifier and staged authority hard to obtain. |
 | Safety oversight | Independent of the program, with pre-registered gates. | Promotion decisions lose credibility. |
 | Replica fault model | Tolerate a lying replica: four replicas and quorum certificates. | Replication that tolerates only a stopped replica is cheaper, and it trusts every kernel host. |
+| Arithmetic and form of the kernel | Integers only, and one published kernel program for one fixed instruction set, run in a small virtual machine (section 9.5). | Floating point with a rule for rounding is the smaller change. Agreement then rests on every compiler and every processor of every replica and of every outside party. The prototype's first kernel failed that on its second type of processor. |
 | Openness | Publish the kernel specification and source. | A closed kernel loses outside scrutiny, outside Verifier authors, and outside checking of the record. |
 | Licence | Apache-2.0, adopted for this repository: its patent grant suits government and vendor use. | A copyleft licence keeps derived work open and deters some vendors. |
 
@@ -747,5 +757,6 @@ This repository has taken the first steps: the Apache License 2.0, a notice that
 - The NTSB's March 2025 urgent recommendation on helicopter Route 4 at Washington National (75 ft vertical spacing).
 - L. Lamport, R. Shostak, and M. Pease, "The Byzantine Generals Problem", 1982. M. Castro and B. Liskov, "Practical Byzantine Fault Tolerance", 1999. Basis of the replica rule in section 9.5.
 - Certificate Transparency (RFC 6962): an append-only, hash-chained log with outside witnesses. The model for the checkable record.
+- The RISC-V Instruction Set Manual, Volume I: Unprivileged Architecture. The instruction set of the machine that runs the kernel program (section 9.5).
 - Open precedents: the seL4 microkernel, NASA's DAIDALUS and core Flight System, and the InterUSS platform.
 - The 0.99999 availability class for critical FAA services. Mandatory controller retirement at 56. The ADS-B Out rule (published 2010, compliance 2020).

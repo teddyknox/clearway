@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/teddyknox/clearway/internal/conv"
 	"github.com/teddyknox/clearway/internal/kernel"
 	"github.com/teddyknox/clearway/internal/planner"
 )
@@ -90,7 +91,7 @@ type Report struct {
 	Marginal           uint64
 	Hard               uint64
 	Sources            map[string]planner.Counter
-	Digest             uint64
+	Digest             string // state digest of the kernel at the end of the run, in hexadecimal
 	Wall               time.Duration
 }
 
@@ -159,7 +160,7 @@ func (r *Report) String() string {
 		r.LossNetCaused, r.LossNetNotPrevented)
 	if r.ClosestVerified > 0 {
 		p("           closest true approach of a verified pair at conflicting altitudes: %.2f nm (standard %.0f nm)",
-			r.ClosestVerified, c.Kernel.Sh)
+			r.ClosestVerified, conv.NM(c.Kernel.Sh))
 	} else {
 		p("           no verified pair at conflicting altitudes came within 12 nm")
 	}
