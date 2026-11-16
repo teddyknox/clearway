@@ -541,6 +541,8 @@ The second rule costs liveness: one faulty implementation blocks every commit. T
 
 These rules make replicas agree. They do not make the kernel right: a defect in the kernel program is on every replica. The Verifier implementations of different kinds, inside the kernel program, are the answer to that.
 
+The machine has two ways to run the kernel program. An interpreter executes one instruction at a time: it is small, and it is the definition. A translation of the program to host code is many times as fast, and it is held to the interpreter: the same count of instructions, and the same machine state at any count. A replica may run the translation, and any party can check it with the interpreter. A dispute between two parties can be narrowed by halves to one instruction, which anyone can check. (prototype: the interpreter, the translation, and tests that compare them. The dispute procedure is not built.)
+
 **A record that others can check.** The kernel is a deterministic state machine. One input log, replayed, gives one state and one sequence of verdicts.
 
 - Each cell chains its input log by hash.

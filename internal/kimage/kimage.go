@@ -25,7 +25,7 @@ var ELF []byte
 
 // SHA256 names the kernel program: the SHA-256 of ELF, in hexadecimal.
 // guest/build.sh prints it. A test holds ELF to it.
-const SHA256 = "2ee1e5a45560706aa3563471fb5a2d1b37ef1f6ad0a42b799a6df52cfaebf704"
+const SHA256 = "67c7ffc63f0f2571fb0335c2510721abefd9d06f21d35ffc82cd936de3f7253b"
 
 // Memory is the size of the machine that the program runs in (bytes). The
 // program keeps a heap of 40 MiB; the stack grows down from the top.
@@ -40,9 +40,17 @@ func Digest(elf []byte) string {
 // Machine runs a kernel program in the machine of package rvm. It is a
 // record.Program. The zero value runs the embedded program with no limit on
 // the number of instructions.
+//
+// The machine executes the embedded program as translated code (kcode.go,
+// which rvm.Translate wrote from ELF), and interprets what the code leaves.
+// The answers, the count of instructions, and the states of the machine are
+// those of the interpreter alone. Interpret makes the machine interpret every
+// instruction: the interpreter defines the machine, and it is the check on
+// the translated code.
 type Machine struct {
-	Image    []byte // the program; nil means ELF
-	MaxSteps uint64 // the most instructions to execute; 0 means no limit
+	Image     []byte // the program; nil means ELF
+	MaxSteps  uint64 // the most instructions to execute; 0 means no limit
+	Interpret bool   // use no translated code
 }
 
 // Run executes the program on one input stream. It returns the output, the
@@ -56,6 +64,11 @@ func (m Machine) Run(input []byte) (output []byte, exit uint32, steps uint64, er
 	vm, err := rvm.Load(image, Memory)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("the kernel program does not load: %w", err)
+	}
+	if m.Image == nil && !m.Interpret {
+		if err := vm.UseCode(kernelCode); err != nil {
+			return nil, 0, 0, fmt.Errorf("kcode.go is not the translation of kernel.elf: run guest/build.sh: %w", err)
+		}
 	}
 	var out bytes.Buffer
 	vm.In, vm.Out = bytes.NewReader(input), &out

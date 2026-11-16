@@ -5,6 +5,7 @@
 //	record verify -key cell.pub run.rec        also check who signed the checkpoints
 //	record verify -witness held.ckpt run.rec   also check the record against checkpoints held elsewhere
 //	record verify -vm run.rec                  also replay the record with the kernel program, in the RISC-V machine
+//	record verify -vm -interpret run.rec       the same, with every instruction interpreted: the reference, and slow
 //	record checkpoints run.rec                 print the checkpoints of a record: what a witness keeps
 //	record keygen -out cell                    write a new signing key to cell.key and cell.pub
 //
@@ -32,7 +33,7 @@ import (
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 const usage = `usage:
-  record verify [-key KEY]... [-quorum N] [-witness FILE] [-no-replay] [-vm] RECORD
+  record verify [-key KEY]... [-quorum N] [-witness FILE] [-no-replay] [-vm [-interpret]] RECORD
   record checkpoints RECORD
   record keygen -out NAME
 `
@@ -99,8 +100,9 @@ func verify(args []string, stdout, stderr io.Writer) (pass bool, err error) {
 	quorum := fs.Int("quorum", 1, "trusted keys that must sign each checkpoint")
 	witness := fs.String("witness", "", "a file of checkpoints that you got from a source other than the record")
 	noReplay := fs.Bool("no-replay", false, "do not replay the kernel")
-	vm := fs.Bool("vm", false, "also replay the record with the kernel program, in the RISC-V machine (slow)")
-	if fs.Parse(args) != nil || fs.NArg() != 1 {
+	vm := fs.Bool("vm", false, "also replay the record with the kernel program, in the RISC-V machine")
+	interpret := fs.Bool("interpret", false, "with -vm: interpret every instruction, and use no translated code (the reference; slow)")
+	if fs.Parse(args) != nil || fs.NArg() != 1 || (*interpret && !*vm) {
 		return false, errUsage
 	}
 	opt := record.Options{Trusted: keys, Quorum: *quorum, NoReplay: *noReplay}
@@ -130,7 +132,7 @@ func verify(args []string, stdout, stderr io.Writer) (pass bool, err error) {
 	print(stdout, fs.Arg(0), rep, opt)
 	pass = rep.OK()
 	if *vm {
-		ok, err := program(stdout, fs.Arg(0))
+		ok, err := program(stdout, fs.Arg(0), *interpret)
 		if err != nil {
 			return false, err
 		}
@@ -141,14 +143,16 @@ func verify(args []string, stdout, stderr io.Writer) (pass bool, err error) {
 }
 
 // program replays the record with the kernel program in the machine, and
-// prints what it found.
-func program(w io.Writer, path string) (bool, error) {
+// prints what it found. The machine runs the program as translated code, or
+// interprets every instruction of it: the two give the same answers and the
+// same count of instructions.
+func program(w io.Writer, path string, interpret bool) (bool, error) {
 	f, err := open(path)
 	if err != nil {
 		return false, err
 	}
 	defer f.Close()
-	rep, err := record.ReplayProgram(f, kimage.Machine{})
+	rep, err := record.ReplayProgram(f, kimage.Machine{Interpret: interpret})
 	if err != nil {
 		return false, err
 	}
@@ -157,7 +161,11 @@ func program(w io.Writer, path string) (bool, error) {
 	}
 	if rep.OK() {
 		p("program", "the kernel program %s, in the RISC-V machine, reproduced", kimage.SHA256[:16])
-		p("", "%d verdicts and %d state digests, in %d instructions", rep.Verdicts, rep.Digests, rep.Steps)
+		how := "as translated code"
+		if interpret {
+			how = "interpreted"
+		}
+		p("", "%d verdicts and %d state digests, in %d instructions, %s", rep.Verdicts, rep.Digests, rep.Steps, how)
 	} else {
 		p("program", "the kernel program %s, in the RISC-V machine, does not reproduce the record", kimage.SHA256[:16])
 		p("", "after %d verdicts and %d state digests", rep.Verdicts, rep.Digests)

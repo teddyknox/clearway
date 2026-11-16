@@ -68,7 +68,7 @@ go run ./cmd/atcviz
 |---|---|
 | `internal/kernel` | Contract Store, Clearance Verifier (two implementations), Conformance Monitor. Integers only, with `internal/fx` and `internal/traj` |
 | `guest/` | The same kernel in Rust, with no runtime, and the program that is built from it |
-| `internal/rvm`, `internal/kimage` | The machine that runs the kernel program, and the built program |
+| `internal/rvm`, `internal/kimage`, `cmd/rvgen` | The machine that runs the kernel program: an interpreter, and a translator to Go code that is held to it. And the built program |
 | `internal/safetynet` | Tactical Safety Net, independent of the kernel |
 | `internal/planner` | Heuristic planner, Fallback Resolver, and a hostile planner for tests |
 | `internal/sim` | Fast-time simulation of one en route cell |

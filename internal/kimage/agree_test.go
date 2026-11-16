@@ -350,11 +350,18 @@ func TestKernelsAgreeOnUnusualInputs(t *testing.T) {
 		}
 	}
 	t.Run("in the machine", func(t *testing.T) {
-		n := uint64(24)
+		n := uint64(120)
 		if testing.Short() {
-			n = 6
+			n = 12
 		}
 		run(t, Machine{}, 1, n)
+	})
+	t.Run("in the machine, interpreted", func(t *testing.T) {
+		n := uint64(12)
+		if testing.Short() {
+			n = 3
+		}
+		run(t, Machine{Interpret: true}, 500, n)
 	})
 	t.Run("as a native program", func(t *testing.T) {
 		const bin = "../../guest/target/release/kernel-host"

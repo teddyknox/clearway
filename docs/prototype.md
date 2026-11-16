@@ -35,7 +35,7 @@ These are results of a simplified model (section 9). They test the logic of the 
 | `internal/safetynet` | A, independent | Tactical Safety Net. It imports nothing from this module. |
 | `internal/fx`, `internal/traj` | A | Integer arithmetic with exact 128-bit products, and trajectories in micrometres and microseconds |
 | `guest/` | A | The kernel a second time, in Rust: no runtime, no dependency, no floating point, no unsafe code. `guest/rv` makes it a program for the machine |
-| `internal/rvm`, `internal/kimage` | A | The machine: an interpreter for RISC-V RV32IMAC with three environment calls. And the built kernel program, with its hash. See [vm.md](vm.md) |
+| `internal/rvm`, `internal/kimage`, `cmd/rvgen` | A | The machine: an interpreter for RISC-V RV32IMAC with three environment calls, and a translator that turns a program into Go code that reaches the same states faster. And the built kernel program, with its hash and its translated code. See [vm.md](vm.md) |
 | `internal/ftraj`, `internal/geom`, `internal/conv` | — | The floating-point trajectories and geometry of the planner and the simulator, and the one place where their values become integers for the kernel |
 | `internal/planner` | B | Heuristic Trajectory Planner, Fallback Resolver, re-contracting of intruders, and a hostile "chaos" planner |
 | `internal/sim` | — | True aircraft states, traffic, clearance delivery, faults, measurement |
@@ -90,7 +90,7 @@ go run ./cmd/atcsim -hours 2 -record run.rec -key cell.key
 go run ./cmd/record verify -key cell.pub run.rec
 ```
 
-Replay the record with the kernel program in the machine as well. This is slow (section 6.8).
+Replay the record with the kernel program in the machine as well (section 6.8). With `-interpret`, the machine interprets every instruction: the reference, and about 16 times as slow.
 
 ```bash
 go run ./cmd/record verify -key cell.pub -vm run.rec
@@ -176,10 +176,11 @@ A loss of separation is two aircraft inside the cell closer than 5 nm and closer
 | `internal/record` | Twenty-three kinds of change to a record, each found by the check that is there to find it. A history that the signer rewrites: found by the replay, or by a witness alone. Signers and quorum. Every input and verdict written and read back with the same bits. Records with extreme values, and a fuzz target: the checker must report on any bytes. |
 | `internal/conformance` | Both implementations pass the 628 conformance vectors. A Verifier in Python passes them through the line protocol. Sixteen Verifiers with one deliberate defect each all fail. |
 | `TestKernelVectorSession`, `TestKernelVectorTraffic` | The kernel on this machine replays two published records that an arm64 machine wrote, to the last bit of every conflict time and state digest. The same tests pass in an amd64 build. |
-| `internal/kimage` | The kernel program has the hash that the code states. In the machine it reproduces both published records. |
-| `TestKernelsAgreeOnUnusualInputs` | The two kernels on inputs that no simulated traffic has: aircraft that do not move, a radius that grows faster than the aircraft flies, legs of one microsecond, values at the limits, and proposals that the kernel must refuse. 24 random sessions in the machine, and 600 with the native program when it is built. |
+| `internal/kimage` | The kernel program has the hash that the code states. In the machine it reproduces both published records, in the interpreter and as translated code, with the same count of instructions. Its translated code is current, and the machine with it has the state of the interpreter at random stops. |
+| `TestKernelsAgreeOnUnusualInputs` | The two kernels on inputs that no simulated traffic has: aircraft that do not move, a radius that grows faster than the aircraft flies, legs of one microsecond, values at the limits, and proposals that the kernel must refuse. 132 random sessions in the machine, 12 of them in the interpreter alone, and 600 with the native program when it is built. |
 | `TestRustKernelNative` | The kernel in Rust, as a native program, reproduces a scripted session, the traffic record, and any record that the caller names. It runs when that program is built. |
-| `internal/rvm` | The machine: each instruction, each fault, the loader, and that a run depends on the program and its input alone ([vm.md](vm.md), section 5). |
+| `internal/rvm` | The interpreter: each instruction, each fault, the loader, and that a run depends on the program and its input alone ([vm.md](vm.md), section 5). |
+| `TestTranslatedOps`, `TestTranslatedGuest` | Translated code against the interpreter: every translated kind of instruction from 141,500 random states, and a program of 19.8 million instructions stopped at random counts. The state must be the same: registers, memory, the count of instructions, and the error. |
 | `internal/arch` | The kernel does not import the planner, the simulator, the Safety Net, random numbers, or the clock. On the path of the kernel there is no floating-point type, no floating-point literal, and no use of package `math`, in Go and in Rust. The Rust kernel has no dependency and no unsafe code. The machine imports nothing from the module. The record imports the kernel and nothing above it, and no random numbers or clock. The Safety Net imports nothing from the module. The two implementations do not call each other's geometry. |
 
 ## 6. Results
@@ -307,15 +308,20 @@ The kernel exists twice: in Go, and in Rust. The Rust kernel is built as one pro
 | The Rust kernel as | Records | Verdicts | State digests | Result |
 |---|---|---|---|---|
 | A native program | Three runs of 4 to 6 h: a hostile planner with aircraft faults, dense traffic with faults, and the exact Verifier alone | 21,788 | 960 | The same bits |
-| The kernel program, in the machine | The session vector | 11 | 16 | The same bits, in 9.2 million instructions |
-| The kernel program, in the machine | The traffic vector: 30 minutes from an empty cell, 240 flights an hour | 428 | 30 | The same bits, in 4.55 billion instructions |
+| The kernel program, in the machine | The session vector | 11 | 16 | The same bits, in 8.3 million instructions |
+| The kernel program, in the machine | The traffic vector: 30 minutes from an empty cell, 240 flights an hour | 428 | 30 | The same bits, in 1.59 billion instructions |
 | A native program | 600 random sessions of unusual inputs: very slow aircraft, values at the limits, proposals that must be refused | 24,968 | 8,795 | The same bits |
-| The kernel program, in the machine | 24 such sessions | 1,034 | 366 | The same bits, in 1.6 billion instructions |
-| The kernel program, in the machine | 2 h, a hostile planner with aircraft faults | 2,395 | 120 | The same bits, in 139 billion instructions |
-| The kernel program, in the machine | 6 h, a hostile planner with aircraft faults and flights with no radio | 7,400 | 360 | The same bits, in 523 billion instructions |
+| The kernel program, in the machine | 132 such sessions | 5,559 | 1,968 | The same bits, in 7.2 billion instructions |
+| The kernel program, in the machine | 2 h, a hostile planner with aircraft faults | 2,395 | 120 | The same bits, in 32 billion instructions |
+| The kernel program, in the machine | 6 h, a hostile planner with aircraft faults and flights with no radio | 7,400 | 360 | The same bits, in 127 billion instructions |
+| The kernel program, in the machine | 6 h, dense traffic at 240 flights an hour, with aircraft faults | 10,066 | 360 | The same bits, in 283 billion instructions |
 
 - **The two kernels agree.** No verdict and no state digest differed in any record that was tried.
-- **The machine is slow.** It executes about 290 million instructions each second on one core. The six-hour record took 34 minutes in the machine and 5 seconds with the Go kernel: about 400 times as long, and about 10 times as fast as the traffic itself. Two things cost. The machine interprets each instruction. And the instruction set has registers of 32 bits, so one exact product of the kernel takes many instructions. Neither is tuned. At this speed a cell with dense traffic has little margin.
+- **The machine was slow, and the causes were measured.** The first kernel program needed 34 minutes in the machine for the six-hour record, against 5 seconds for the Go kernel. Three things cost, and two were changed ([vm.md](vm.md), section 5).
+  - The Rust kernel computed two values of a tube again at every check of a pair: 65% of its instructions. It now computes them once. The six-hour record went from 523 to 127 billion instructions, with the same answers.
+  - The machine interpreted each instruction, at about 14 processor cycles for one. It now also runs the program as *translated code*: Go source that a translator writes from the program, held to the interpreter by tests. Translated code needs about 1 cycle for one instruction.
+  - The instruction set has registers of 32 bits, so one exact product of the kernel takes many instructions. This remains.
+- **The speeds now.** The six-hour record takes 29 seconds as translated code and 7.3 minutes in the interpreter, with the same count of instructions and the same answers. Six hours of dense traffic take 64 seconds as translated code. That is 340 to 750 times as fast as the traffic, and about 6 times as slow as the Go kernel.
 - **What this does not show.** One author wrote both kernels from one specification, so both can share one misreading. The machine is tested and not proved. The program's bytes depend on the version of the compiler, and no second party has built them yet. [vm.md](vm.md), section 6, lists these limits.
 
 ## 7. Defects that the prototype found in itself

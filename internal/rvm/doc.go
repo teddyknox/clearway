@@ -115,8 +115,20 @@
 //
 // # Speed
 //
+// Two things make a run faster, and neither changes its result.
+//
 // Run keeps decoded instructions in a cache. An entry is used only when the
 // bytes at pc equal the bytes that the entry was decoded from, so a store
 // into code, by the guest or by the caller, has the same effect as on a
 // machine without a cache.
+//
+// Translate writes Go source for the instructions of one program: a Code.
+// A machine with a Code (UseCode) executes the code where it applies and
+// interprets every other instruction. The code executes whole blocks of
+// integer computations, loads, stores, branches, and jumps. It stops before
+// an instruction that would fault, before a store into the program, and
+// before every other kind of instruction, and the interpreter takes that
+// instruction. The count of instructions and the state after each count are
+// those of the interpreter. The interpreter is the definition, and the tests
+// hold each Code to it.
 package rvm

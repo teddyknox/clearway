@@ -161,24 +161,6 @@ impl Trajectory {
         self.legs.iter().map(|l| fx::speed(l.v)).min().unwrap()
     }
 
-    /// The highest ground speed of any leg that overlaps t0 to t1, rounded
-    /// up, and the number of those legs.
-    pub fn speed_over(&self, t0: i64, t1: i64) -> (i64, i64) {
-        let mut speed = 0;
-        let mut legs = 0;
-        for l in &self.legs {
-            if l.t1 < t0 || l.t0 > t1 {
-                continue;
-            }
-            speed = speed.max(fx::speed_up(l.v));
-            legs += 1;
-        }
-        if legs == 0 {
-            return (fx::speed_up(self.leg_at(t0).v), 1);
-        }
-        (speed, legs)
-    }
-
     /// A copy with dt added to every time. The caller must check the result.
     /// The caller must keep |dt| <= 2·MAX_TIME, so that no time overflows.
     pub fn shift(&self, dt: i64) -> Trajectory {

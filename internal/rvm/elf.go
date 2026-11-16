@@ -115,6 +115,7 @@ func Load(elf []byte, memSize uint32) (*Machine, error) {
 	}
 
 	m := &Machine{PC: entry, Mem: make([]byte, memSize)}
+	m.codeLo, m.codeHi, m.loadEnd = uint32(codeLo), uint32(codeHi), uint32(end)
 	m.X[2] = memSize &^ 15
 	for _, s := range segs {
 		copy(m.Mem[s.vaddr:], elf[s.offset:s.offset+s.filesz])

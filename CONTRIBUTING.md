@@ -35,10 +35,20 @@ The Go tests need no Rust toolchain: the built kernel program is in the reposito
 cargo build --release --manifest-path guest/Cargo.toml -p clearway-kernel-host
 ```
 
-Then build the kernel program for the machine. The script prints its SHA-256, which goes into `internal/kimage/kimage.go`:
+Then build the kernel program for the machine. The script also writes the translated code of the program, `internal/kimage/kcode.go`, and prints the SHA-256 of the program, which goes into `internal/kimage/kimage.go`:
 
 ```bash
 ./guest/build.sh
+```
+
+A change to the translator or to the decoder of `internal/rvm` changes the translated code. Write it again for the kernel program and for the two test programs of the machine:
+
+```bash
+go run ./cmd/rvgen -pkg kimage -name kernelCode -o internal/kimage/kcode.go internal/kimage/kernel.elf
+```
+
+```bash
+RVM_WRITE_CODE=1 go test -tags rvmbootstrap ./internal/rvm -run TestTranslationsAreCurrent
 ```
 
 ## Rules
@@ -46,17 +56,18 @@ Then build the kernel program for the machine. The script prints its SHA-256, wh
 1. **The kernel stays deterministic and alone.** `internal/kernel` imports only `internal/fx` and `internal/traj`. It uses no random numbers and no clock. `internal/safetynet` imports nothing from this module. The two Verifier implementations do not call each other's geometry. The tests in `internal/arch` enforce this.
    The kernel must compute the same bits on every machine. So `internal/fx`, `internal/traj`, `internal/kernel`, and `guest/kernel` have no floating point: no such type, no such literal, and no use of package `math` ([docs/spec.md](docs/spec.md), section 1). `guest/kernel` also has no unsafe code. `internal/arch` tests these rules too.
 2. **No dependencies.** The module uses the Go standard library only, and `guest/` uses no crate. A change that adds a dependency must say why nothing else will do.
-3. **The two kernels move together.** A change to what the kernel does changes `internal/kernel` and `guest/kernel` in one commit, with the kernel program built again and its new hash in `internal/kimage/kimage.go`. `go test ./internal/kimage ./internal/record` then shows that the two give the same bits.
-4. **A change to the kernel or to a Verifier carries its evidence.**
+3. **The two kernels move together.** A change to what the kernel does changes `internal/kernel` and `guest/kernel` in one commit, with the kernel program built again, its translated code, and its new hash in `internal/kimage/kimage.go`. `go test ./internal/kimage ./internal/record` then shows that the two give the same bits.
+4. **The interpreter defines the machine.** Translated code is a faster way to the same states, and nothing else. A change to `rvm.Translate` must keep every test that compares translated code with the interpreter, and a new kind of translated instruction needs a slot in the program of `opsProgram`.
+5. **A change to the kernel or to a Verifier carries its evidence.**
    - A test that fails without the change.
    - Both implementations still agree with the brute-force oracle, still report every collision course, and still pass the conformance suite.
    - `go run ./cmd/atcsim -exp verifiers` still shows no loss of the kernel class and no alarm for two correct implementations. Each implementation must also pass alone: a pair can hide a defect in one member.
    - If the change alters what the kernel does, the two kernel vectors are written again ([conformance/README.md](conformance/README.md)). If it does not, they pass as they are.
-5. **A fix for a defect names the defect.** Say in the code or in its test why the old form was wrong, as `TestSampledStaysInsideTheTolerance` in `internal/kernel` does.
-6. **The specification and the suite move together.** A change to the meaning of a tube or of separation changes [docs/spec.md](docs/spec.md), gives the vectors a new version, and must leave every faulty Verifier in `internal/conformance` failing.
-7. **A scenario says only what it does.** `TestScenariosShowTheirPoint` holds every scenario description in the viewer to the run. Change both together.
-8. **Published numbers come from one command.** The tables in [docs/prototype.md](docs/prototype.md) come from `go run ./cmd/atcsim -exp all -hours 24 -seeds 8`. If your change moves them, run it again and update the tables.
-9. **Documents use plain, exact language.** Short active sentences. One term for one concept; the terms are in section 5 of the design. A dagger (†) marks a value that simulation must confirm.
+6. **A fix for a defect names the defect.** Say in the code or in its test why the old form was wrong, as `TestSampledStaysInsideTheTolerance` in `internal/kernel` does.
+7. **The specification and the suite move together.** A change to the meaning of a tube or of separation changes [docs/spec.md](docs/spec.md), gives the vectors a new version, and must leave every faulty Verifier in `internal/conformance` failing.
+8. **A scenario says only what it does.** `TestScenariosShowTheirPoint` holds every scenario description in the viewer to the run. Change both together.
+9. **Published numbers come from one command.** The tables in [docs/prototype.md](docs/prototype.md) come from `go run ./cmd/atcsim -exp all -hours 24 -seeds 8`. If your change moves them, run it again and update the tables.
+10. **Documents use plain, exact language.** Short active sentences. One term for one concept; the terms are in section 5 of the design. A dagger (†) marks a value that simulation must confirm.
 
 ## Licence of contributions
 

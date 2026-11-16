@@ -135,10 +135,19 @@ func TestCommandWithTheKernelProgram(t *testing.T) {
 	if status != 0 {
 		t.Fatalf("verify -vm: status %d\n%s%s", status, out, errOut)
 	}
-	for _, want := range []string{"in the RISC-V machine, reproduced", "11 verdicts and 16 state digests", "result     PASS"} {
+	for _, want := range []string{"in the RISC-V machine, reproduced", "11 verdicts and 16 state digests", "as translated code", "result     PASS"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("verify -vm: no %q in\n%s", want, out)
 		}
+	}
+	// The interpreter gives the same line, with the same count of
+	// instructions.
+	slow, _, status := command("verify", "-vm", "-interpret", vector)
+	if status != 0 || strings.ReplaceAll(slow, "interpreted", "as translated code") != out {
+		t.Errorf("verify -vm -interpret: status %d\n%s\nwithout -interpret:\n%s", status, slow, out)
+	}
+	if _, _, status := command("verify", "-interpret", vector); status != 2 {
+		t.Errorf("verify -interpret without -vm: status %d, want 2", status)
 	}
 
 	rec, err := os.ReadFile(vector)

@@ -245,7 +245,7 @@ impl Kernel {
 
     fn contract_tube(&self, id: i64, tr: Trajectory, anchor: i64, r0: i64) -> Tube {
         let vmin = tr.min_speed();
-        Tube { id: 0, flight: id, traj: tr, anchor, r0, k: self.p.k, vu0: self.p.vtol, vu_rate: 0, vmin, intruder: false }
+        Tube::new(id, tr, anchor, r0, self.p.k, self.p.vtol, 0, vmin, false)
     }
 
     /// Forgets every window of the tube.
@@ -652,18 +652,9 @@ impl Kernel {
             legs: alloc::vec![Leg { t0: tr.t, t1: end, p0: tr.pos, v: tr.vel }],
             vsegs: alloc::vec![VSeg { t0: tr.t, t1: end, a0: lo, a1: hi }],
         };
-        Tube {
-            id: self.next_id(),
-            flight: f.id,
-            traj,
-            anchor: tr.t,
-            r0: self.p.intruder_r0,
-            k: self.p.intruder_k,
-            vu0: vu,
-            vu_rate: 0,
-            vmin: fx::speed(tr.vel),
-            intruder: true,
-        }
+        let mut tube = Tube::new(f.id, traj, tr.t, self.p.intruder_r0, self.p.intruder_k, vu, 0, fx::speed(tr.vel), true);
+        tube.id = self.next_id();
+        tube
     }
 
     /// Re-anchors every eligible contract on the latest track.

@@ -128,6 +128,14 @@ type Machine struct {
 	cache   []insn
 	noCache bool   // decode every instruction afresh; tests set this
 	buf     []byte // holds input between In and Mem
+
+	// code is host code for the program, or nil: see UseCode. It changes the
+	// speed of the machine and nothing else.
+	code *Code
+
+	// What Load found in the image, for Translate: the span of the
+	// executable segments, and the end of the last segment.
+	codeLo, codeHi, loadEnd uint32
 }
 
 // Halted reports whether the guest has halted, and its exit code. The exit
@@ -161,7 +169,7 @@ func (m *Machine) Run(maxSteps uint64) (exit uint32, err error) {
 	return 0, ErrStepLimit
 }
 
-// Step executes one instruction.
+// Step executes one instruction. It always interprets the instruction.
 //
 // Step returns nil when the instruction completes; a halt is a completed
 // instruction. Step returns ErrHalted, and does nothing, if the guest halted
@@ -174,20 +182,60 @@ func (m *Machine) Step() error {
 	if m.halted {
 		return ErrHalted
 	}
-	return m.run(1)
+	return m.interpret(1)
 }
 
 // minCacheLen is the cache length of a machine that Load did not build.
 const minCacheLen = 1 << 10
 
+// When translated code does not start at the pc, the machine interprets up
+// to this many instructions before it tries the code again.
+const interpretRun = 32
+
 // run executes at most limit instructions. It stops early at a halt, at a
-// fault, and at a stream error.
+// fault, and at a stream error. Its contract is that of interpret.
+//
+// If the machine has translated code, run executes the code where the code
+// applies, and interprets the instructions that the code leaves: see Code.
+// The states that it passes through are those of the interpreter.
+func (m *Machine) run(limit uint64) error {
+	if m.code == nil {
+		return m.interpret(limit)
+	}
+	for done := uint64(0); done < limit && !m.halted; {
+		m.X[0] = 0
+		pc, n := m.code.Run(&m.X, m.Mem, m.PC, limit-done)
+		m.PC, m.Steps, done = pc, m.Steps+n, done+n
+		if done == limit {
+			break
+		}
+		// The code left the next instruction to the interpreter. If the code
+		// executed nothing, no block starts here: interpret a few more.
+		k := uint64(1)
+		if n == 0 {
+			k = min(interpretRun, limit-done)
+		}
+		before := m.Steps
+		if err := m.interpret(k); err != nil {
+			return err
+		}
+		done += m.Steps - before
+		if m.code == nil {
+			// The guest stored into its own code.
+			return m.interpret(limit - done)
+		}
+	}
+	return nil
+}
+
+// interpret executes at most limit instructions. It stops early at a halt,
+// at a fault, and at a stream error.
 //
 // The caller makes sure that the guest has not halted and that hostErr is
-// nil. run returns nil at the limit and at a halt. It adds the count of
-// completed instructions to Steps. At a fault it returns a *Fault and leaves
-// the state as it was before the faulting instruction.
-func (m *Machine) run(limit uint64) error {
+// nil. interpret returns nil at the limit and at a halt. It adds the count
+// of completed instructions to Steps. At a fault it returns a *Fault and
+// leaves the state as it was before the faulting instruction.
+func (m *Machine) interpret(limit uint64) error {
 	if len(m.cache) == 0 {
 		m.cache = make([]insn, minCacheLen)
 	}
@@ -204,7 +252,14 @@ func (m *Machine) run(limit uint64) error {
 
 		kind       faultKind
 		arg1, arg2 uint32
+
+		// The span of the translated code, or an empty span. A store into
+		// it makes the code stale.
+		codeLo, codeHi uint64
 	)
+	if m.code != nil {
+		codeLo, codeHi = uint64(m.code.Lo), uint64(m.code.Hi)
+	}
 	x[0] = 0
 
 loop:
@@ -325,6 +380,9 @@ loop:
 				break loop
 			}
 			mem[addr] = uint8(b)
+			if uint64(addr) < codeHi && uint64(addr)+1 > codeLo {
+				m.code, codeHi = nil, 0
+			}
 		case opSh:
 			addr := a + imm
 			if uint64(addr)+2 > size {
@@ -332,6 +390,9 @@ loop:
 				break loop
 			}
 			binary.LittleEndian.PutUint16(mem[addr:], uint16(b))
+			if uint64(addr) < codeHi && uint64(addr)+2 > codeLo {
+				m.code, codeHi = nil, 0
+			}
 		case opSw:
 			addr := a + imm
 			if uint64(addr)+4 > size {
@@ -339,6 +400,9 @@ loop:
 				break loop
 			}
 			binary.LittleEndian.PutUint32(mem[addr:], b)
+			if uint64(addr) < codeHi && uint64(addr)+4 > codeLo {
+				m.code, codeHi = nil, 0
+			}
 
 		case opAddi:
 			x[rd] = a + imm
@@ -459,6 +523,9 @@ loop:
 			}
 			if m.reserved && m.resAddr == a {
 				binary.LittleEndian.PutUint32(mem[a:], b)
+				if uint64(a) < codeHi && uint64(a)+4 > codeLo {
+					m.code, codeHi = nil, 0
+				}
 				x[rd] = 0
 			} else {
 				x[rd] = 1
@@ -502,6 +569,9 @@ loop:
 				}
 			}
 			binary.LittleEndian.PutUint32(mem[a:], v)
+			if uint64(a) < codeHi && uint64(a)+4 > codeLo {
+				m.code, codeHi = nil, 0
+			}
 			x[rd] = old
 
 		case opEcall:
@@ -522,6 +592,9 @@ loop:
 					}
 					var err error
 					got, err = m.read(mem[uint64(ptr) : uint64(ptr)+uint64(count)])
+					if uint64(ptr) < codeHi && uint64(ptr)+uint64(count) > codeLo {
+						m.code, codeHi = nil, 0
+					}
 					if err != nil {
 						m.hostErr = fmt.Errorf("rvm: input stream: %w", err)
 						break loop

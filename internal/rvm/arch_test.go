@@ -24,6 +24,12 @@ func TestSourceIsDeterministic(t *testing.T) {
 		"errors":          true,
 		"fmt":             true,
 		"io":              true,
+		// For Translate, which writes Go source.
+		"bytes":     true,
+		"go/format": true,
+		"sort":      true,
+		"strconv":   true,
+		"strings":   true,
 	}
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")

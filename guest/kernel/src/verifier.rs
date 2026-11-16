@@ -6,7 +6,8 @@ use crate::fx::{self, Vec2};
 use crate::traj::{self, Leg, Trajectory, VSeg};
 use alloc::vec::Vec;
 
-/// The protected envelope of one trajectory.
+/// The protected envelope of one trajectory. A tube does not change after
+/// `new`, except for its identifier.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Tube {
     pub id: u64,
@@ -19,9 +20,43 @@ pub struct Tube {
     pub vu_rate: i64,
     pub vmin: i64,
     pub intruder: bool,
+
+    // Two values that follow from the fields above. `new` computes them once,
+    // because every check of the tube needs them, and on a machine with
+    // 32-bit registers they are the most expensive part of a check.
+    /// The spans over which the vertical segments are in effect, with no slack.
+    spans: Vec<VertEvent>,
+    /// The ground speed of each leg, rounded up.
+    speeds: Vec<i64>,
 }
 
 impl Tube {
+    /// Builds a tube. The identifier is 0 until the kernel gives it one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(flight: i64, traj: Trajectory, anchor: i64, r0: i64, k: i64, vu0: i64, vu_rate: i64, vmin: i64, intruder: bool) -> Tube {
+        let spans = spans(&traj, anchor, r0, k, vmin, 0);
+        let speeds = traj.legs.iter().map(|l| fx::speed_up(l.v)).collect();
+        Tube { id: 0, flight, traj, anchor, r0, k, vu0, vu_rate, vmin, intruder, spans, speeds }
+    }
+
+    /// The highest ground speed of any leg that overlaps t0 to t1, rounded
+    /// up, and the number of those legs.
+    fn speed_over(&self, t0: i64, t1: i64) -> (i64, i64) {
+        let mut speed = 0;
+        let mut legs = 0;
+        for (l, &v) in self.traj.legs.iter().zip(&self.speeds) {
+            if l.t1 < t0 || l.t0 > t1 {
+                continue;
+            }
+            speed = speed.max(v);
+            legs += 1;
+        }
+        if legs == 0 {
+            return (fx::speed_up(self.traj.leg_at(t0).v), 1);
+        }
+        (speed, legs)
+    }
+
     pub fn start(&self) -> i64 {
         self.traj.start()
     }
@@ -114,6 +149,7 @@ fn vert_separated(a: &Tube, b: &Tube, a_band: (i64, i64), b_band: (i64, i64), sv
 const NEVER: i64 = -fx::NO_LIMIT;
 const ALWAYS: i64 = fx::NO_LIMIT;
 
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct VertEvent {
     open: i64,
     close: i64,
@@ -158,38 +194,38 @@ fn widen(t: i64, d: i64) -> i64 {
 /// some whole microsecond from t − w to t + w. The radius is M·r0 up to the
 /// anchor and grows from it, so each inequality of the rule is solved once for
 /// each side of the anchor. One segment has at most two spans.
-fn events(tb: &Tube, w: i64) -> Vec<VertEvent> {
-    let mut ev = Vec::with_capacity(tb.traj.vsegs.len());
-    let base = fx::mul(tb.r0, fx::M) - fx::mul(tb.k, tb.anchor); // from the anchor, R(t) = base + k·t
+fn spans(traj: &Trajectory, anchor: i64, r0: i64, k: i64, vmin: i64, w: i64) -> Vec<VertEvent> {
+    let mut ev = Vec::with_capacity(traj.vsegs.len());
+    let base = fx::mul(r0, fx::M) - fx::mul(k, anchor); // from the anchor, R(t) = base + k·t
     // Up to the anchor, the allowance: floor(M·r0 / vmin). M·r0 is below 2^60.
-    let early = if tb.vmin > 0 { tb.r0 * fx::M / tb.vmin } else { 0 };
-    for s in &tb.traj.vsegs {
+    let early = if vmin > 0 { r0 * fx::M / vmin } else { 0 };
+    for s in &traj.vsegs {
         let mut add = |open: i64, close: i64| {
             if open <= close {
                 ev.push(VertEvent { open: widen(open, -w), close: widen(close, w), lo: s.lo(), hi: s.hi() });
             }
         };
-        if tb.vmin == 0 {
+        if vmin == 0 {
             add(s.t0, s.t1);
             continue;
         }
         // Up to the anchor.
         let open1 = s.t0 - early;
-        let close1 = (s.t1 + early).min(tb.anchor);
+        let close1 = (s.t1 + early).min(anchor);
         // From the anchor.
-        let mut open2 = ceil_div(fx::mul(tb.vmin, s.t0) - base, tb.vmin + tb.k).max(tb.anchor);
+        let mut open2 = ceil_div(fx::mul(vmin, s.t0) - base, vmin + k).max(anchor);
         let mut close2 = ALWAYS;
-        let n = fx::mul(tb.vmin, s.t1) + base;
-        if tb.vmin > tb.k {
-            close2 = floor_div(n, tb.vmin - tb.k);
-        } else if tb.vmin == tb.k {
+        let n = fx::mul(vmin, s.t1) + base;
+        if vmin > k {
+            close2 = floor_div(n, vmin - k);
+        } else if vmin == k {
             if n < 0 {
                 close2 = NEVER;
             }
         } else {
-            open2 = open2.max(ceil_div(-n, tb.k - tb.vmin));
+            open2 = open2.max(ceil_div(-n, k - vmin));
         }
-        if open1 <= close1 && open2 <= close2 && close1 == tb.anchor && open2 == tb.anchor {
+        if open1 <= close1 && open2 <= close2 && close1 == anchor && open2 == anchor {
             add(open1, close2); // the two spans meet at the anchor
             continue;
         }
@@ -279,10 +315,17 @@ pub fn analytic(a: &Tube, b: &Tube, from: i64, to: i64, sp: SepParams) -> CheckR
     if hi <= lo {
         return CheckResult::default();
     }
-    let eva = events(a, sp.vert_slack);
-    let evb = events(b, sp.vert_slack);
+    // With no slack the spans are those that `Tube::new` computed.
+    let (wide_a, wide_b);
+    let (eva, evb): (&[VertEvent], &[VertEvent]) = if sp.vert_slack == 0 {
+        (&a.spans, &b.spans)
+    } else {
+        wide_a = spans(&a.traj, a.anchor, a.r0, a.k, a.vmin, sp.vert_slack);
+        wide_b = spans(&b.traj, b.anchor, b.r0, b.k, b.vmin, sp.vert_slack);
+        (&wide_a, &wide_b)
+    };
 
-    if let (Some(ab), Some(bb)) = (band_over(&eva, lo, hi), band_over(&evb, lo, hi)) {
+    if let (Some(ab), Some(bb)) = (band_over(eva, lo, hi), band_over(evb, lo, hi)) {
         if vert_separated(a, b, ab, bb, sp.sv_true, hi) {
             return CheckResult::default();
         }
@@ -301,7 +344,7 @@ pub fn analytic(a: &Tube, b: &Tube, from: i64, to: i64, sp: SepParams) -> CheckR
             add(tr.legs[i].t1);
         }
     }
-    for ev in [&eva, &evb] {
+    for ev in [eva, evb] {
         for e in ev.iter() {
             if e.open > NEVER {
                 add(e.open);
@@ -318,7 +361,7 @@ pub fn analytic(a: &Tube, b: &Tube, from: i64, to: i64, sp: SepParams) -> CheckR
         if e < s {
             continue;
         }
-        let bands = (band_over(&eva, s, s), band_over(&evb, s, s));
+        let bands = (band_over(eva, s, s), band_over(evb, s, s));
         let mut hs = s;
         if let (Some(ab), Some(bb)) = bands {
             if vert_separated(a, b, ab, bb, sp.sv_true, s) {
@@ -380,8 +423,8 @@ fn node(a: &Tube, b: &Tube, lo: i64, hi: i64, sp: SepParams, step: i64, res: &mu
     let mid = lo + (hi - lo) / 2;
     let (pa, pb) = (a.traj.pos(mid), b.traj.pos(mid));
     let d = fx::isqrt(fx::sq_sum(pa.x - pb.x, pa.y - pb.y));
-    let (va, na) = a.traj.speed_over(lo, hi);
-    let (vb, nb) = b.traj.speed_over(lo, hi);
+    let (va, na) = a.speed_over(lo, hi);
+    let (vb, nb) = b.speed_over(lo, hi);
     let closure = fx::mul(va + vb, (mid - lo).max(hi - mid)) + fx::mul(na + nb - 2, 2 * traj::JOIN * fx::M);
     let req = fx::mul(sp.sh, fx::M) + a.radius_pm(hi) + b.radius_pm(hi);
     if req <= fx::MAX_REQ as i128 && d as i128 - closure >= req {

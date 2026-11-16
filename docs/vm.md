@@ -20,7 +20,7 @@ The machine removes the second cause. The kernel is published as one program for
 
 The machine has no floating-point instruction. A program that tried to use floating point would stop with a fault.
 
-**Two kernels.** The repository also holds the kernel in Go (`internal/kernel`). The simulator uses it, because a native kernel is some hundreds of times as fast as the kernel program in the machine. The two must agree on every bit. Section 5 says how that is tested.
+**Two kernels.** The repository also holds the kernel in Go (`internal/kernel`). The simulator uses it: it runs in the same process, and it is some times as fast as the kernel program in the machine (section 5). The two must agree on every bit. Section 5 says how that is tested.
 
 ## 2. The machine
 
@@ -96,13 +96,31 @@ The machine counts the instructions that it executes. The count is part of the r
 
 A machine can state its whole state as one SHA-256 value. Two machines that ran the same program on the same input for the same number of instructions have the same digest. The digest covers, in this order, all little-endian: the tag `clearway rvm state 0.1` and a line feed, `pc`, the 32 registers, the reservation (a flag and an address), the halt state (a flag and an exit code), the size of the memory as 64 bits, and the memory.
 
+### 2.8 Translated code
+
+The interpreter of `internal/rvm` executes one instruction at a time. It defines the machine, and it is slow. For a program that is known ahead of time, the package also writes *translated code*: Go source that does what the instructions of the program do. The Go compiler builds it into the instructions of the host. `rvm.Translate` writes the source, and `cmd/rvgen` is the command for it.
+
+Translated code changes how fast the machine reaches a state. It must not change the state. These rules keep it so.
+
+- **One decoder.** `Translate` reads each instruction with the decoder of the interpreter.
+- **Blocks.** Translated code is made of *blocks*. A block is a run of instructions that control enters at the first and leaves after the last. Each block is decoded from the bytes at its own first address. If control reaches an address at which no block starts, the interpreter continues from there. So the choice of blocks changes the speed alone.
+- **Plain instructions only.** A block holds integer computations, loads, stores, branches, and jumps. The interpreter executes every other instruction: an environment call, `ebreak`, an atomic instruction, and a code that is not an instruction.
+- **No fault in translated code.** Before a load or a store, translated code tests the address. If the instruction would fault, translated code stops before it, and the interpreter executes it and reports the fault. Translated code is Go with no unsafe code. An address that it did not test would stop the host program. It could not reach memory outside the machine.
+- **Stores into the program.** Translated code stops before a store that touches the instructions that it stands for. The interpreter executes that store. From then on, the machine uses no translated code.
+- **The registers are current before each instruction.** Translated code writes each new value of a register to the registers of the machine at once. So it can stop before any instruction, and the state is then the state that the interpreter has there.
+- **The count of instructions.** Translated code counts the instructions that it executes. A run with a limit of N instructions stops after exactly N, with translated code or without it. So two parties can still compare machine state digests at any count.
+- **The program must be the program.** Translated code states the SHA-256 of the instruction bytes that it stands for. The machine refuses translated code if the bytes in its memory differ.
+
+The interpreter stays the definition, and it is the check on translated code. Section 5 says how translated code is held to it. `record verify -vm -interpret` uses the interpreter alone.
+
 ## 3. The kernel program
 
 | | |
 |---|---|
 | Source | [guest/kernel](../guest/kernel): the kernel of [spec.md](spec.md), in Rust. [guest/rv](../guest/rv): the entry point, the environment calls, and a heap |
-| File | [internal/kimage/kernel.elf](../internal/kimage/kernel.elf), 120,080 bytes |
-| SHA-256 | `2ee1e5a45560706aa3563471fb5a2d1b37ef1f6ad0a42b799a6df52cfaebf704` |
+| File | [internal/kimage/kernel.elf](../internal/kimage/kernel.elf), 126,380 bytes |
+| SHA-256 | `67c7ffc63f0f2571fb0335c2510721abefd9d06f21d35ffc82cd936de3f7253b` |
+| Translated code | `internal/kimage/kcode.go`: 38,908 instructions in 6,761 blocks (section 2.8). `rvm.Translate` wrote it from the file above, and a test fails if it is not what `Translate` writes now |
 | Memory | 64 MiB |
 | Built with | `guest/build.sh`: rustc 1.99.1, target `riscv32imac-unknown-none-elf`, no network |
 
@@ -121,7 +139,7 @@ A machine can state its whole state as one SHA-256 value. Two machines that ran 
 ./guest/build.sh
 ```
 
-The script builds the program, copies it to `internal/kimage/kernel.elf`, and prints its SHA-256. A change to the program needs the new file and the new hash in `internal/kimage/kimage.go` in the same commit. A test fails if they differ.
+The script builds the program, copies it to `internal/kimage/kernel.elf`, writes its translated code to `internal/kimage/kcode.go`, and prints its SHA-256. A change to the program needs the two new files and the new hash in `internal/kimage/kimage.go` in the same commit. A test fails if they differ.
 
 ## 4. The two streams
 
@@ -189,7 +207,7 @@ The reasons, from 1: *unknown-flight*, *duplicate*, *authority*, *intruder*, *bu
 
 ## 5. How it is tested
 
-**The machine** (`internal/rvm`, 31 tests).
+**The interpreter** (`internal/rvm`).
 
 - Each instruction, full and compressed, against cases that state the expected registers and memory.
 - The decoder against the encodings that the assembler of the Rust toolchain produced for 771 pieces of assembly. With `llvm-objdump` available, the decoder agrees with it on 233,536 codes: every code of 16 bits, and about 184,000 of 32 bits. A digest of those decodes is in a test that needs no tool.
@@ -198,7 +216,16 @@ The reasons, from 1: *unknown-flight*, *duplicate*, *authority*, *intruder*, *bu
 - The loader: valid files, 33 kinds of invalid file, and every truncation of a valid one.
 - Determinism: the same run with the input in one part and in many parts, with one call and with one call for each instruction, and with the cache of decoded instructions on and off. The count of instructions and the machine state digest must be equal.
 - Two fuzz tests: one gives the loader and the machine arbitrary files, and one runs arbitrary bytes as code in four ways that must agree. The first ran for 39 million inputs without a failure.
-- The helper that wrote the machine put 142 defects of one line each into it. The tests caught 141. The remaining one does not change what the machine does.
+- The helper that wrote the interpreter put 142 defects of one line each into it. The tests caught 141. The remaining one does not change what the machine does.
+
+**Translated code** (`internal/rvm`, `internal/kimage`). Each test runs one program twice from one state, with translated code and with the interpreter alone, and requires the same state after: `pc`, registers, every byte of memory, the reservation, the halt state, the count of instructions, and the error.
+
+- *Each instruction.* A program of 566 instructions holds every kind that `Translate` translates, with the destination also a source, with register 0 as a source and as the destination, and in compressed form. Each instruction runs 250 times from random states: values at which an operation has a special result, addresses at the edges of the memory and of the program, and random values. That is 141,500 runs. The test also requires that translated code executed the instruction whenever it could.
+- *A whole program.* The Rust program of the interpreter tests, 19.8 million instructions, of which 99.99% run in translated code. Its output is still checked against Go's libraries. The two machines are stopped at more than 200 random counts of instructions and compared.
+- *The kernel program.* Both kernel vectors run in the interpreter and as translated code, with the same count of instructions. On the session vector the two machines are stopped at 28 random counts, and their machine state digests are equal.
+- *A store into the program.* The interpreter takes it, the machine drops the translated code, and the new instruction runs.
+- *The code in the repository is current.* The tests translate the programs again and compare the result with the files.
+- *Defects.* 36 defects of one line were put into `Translate`, one at a time. The tests caught 35. The other one changes no line of the code that `Translate` writes.
 
 **The kernel program** (`internal/kimage`, `internal/record`).
 
@@ -207,18 +234,19 @@ The reasons, from 1: *unknown-flight*, *duplicate*, *authority*, *intruder*, *bu
 
 | Vector | Verdicts | State digests | Instructions |
 |---|---|---|---|
-| Session: every kind of input | 11 | 16 | 9,246,103 |
-| Traffic: 30 minutes from an empty cell, 240 flights an hour | 428 | 30 | 4,552,661,166 |
+| Session: every kind of input | 11 | 16 | 8,256,773 |
+| Traffic: 30 minutes from an empty cell, 240 flights an hour | 428 | 30 | 1,594,004,276 |
 
-- The program also reproduces two longer records in the machine. These runs are too long for the tests, and were made by hand with `record verify -vm`.
+- The program also reproduces longer records in the machine. These runs are not in the tests. They were made with `record verify -vm`, as translated code and in the interpreter alone, with the same count of instructions.
 
 | Record | Verdicts | State digests | Instructions |
 |---|---|---|---|
-| 2 h, a hostile planner with aircraft faults | 2,395 | 120 | 139,347,374,451 |
-| 6 h, a hostile planner with aircraft faults and flights with no radio | 7,400 | 360 | 523,173,429,430 |
+| 2 h, a hostile planner with aircraft faults | 2,395 | 120 | 31,594,587,243 |
+| 6 h, a hostile planner with aircraft faults and flights with no radio | 7,400 | 360 | 127,296,952,166 |
+| 6 h, dense traffic at 240 flights an hour, with aircraft faults (translated code only) | 10,066 | 360 | 282,583,241,575 |
 
 - The same Rust kernel as a native program reproduces three records of four to six hours: 21,788 verdicts and 960 state digests.
-- Simulated traffic has only usual inputs. So a test builds random sessions of unusual ones: aircraft that do not move, or that move a micrometre in a second, a radius that grows faster than the aircraft flies, legs of one microsecond, values at the limits, and proposals that the kernel must refuse. The Go kernel applies each session, and the Rust kernel must give the same answers. It does: in the machine for 24 sessions (1,034 verdicts, 366 state digests), and as a native program for 600 (24,968 verdicts, 8,795 state digests).
+- Simulated traffic has only usual inputs. So a test builds random sessions of unusual ones: aircraft that do not move, or that move a micrometre in a second, a radius that grows faster than the aircraft flies, legs of one microsecond, values at the limits, and proposals that the kernel must refuse. The Go kernel applies each session, and the Rust kernel must give the same answers. It does: in the machine for 132 sessions (120 as translated code and 12 in the interpreter alone; 5,559 verdicts and 1,968 state digests), and as a native program for 600 (24,968 verdicts and 8,795 state digests).
 
 **To check a record with the program.**
 
@@ -226,22 +254,31 @@ The reasons, from 1: *unknown-flight*, *duplicate*, *authority*, *intruder*, *bu
 go run ./cmd/record verify -vm conformance/kernel-traffic-0.2.rec.gz
 ```
 
-**Speed.** The machine executes about 290 million instructions each second on one core of a 2025 laptop.
+**Speed.** On one core of a 2025 laptop the interpreter executes about 285 million instructions each second, and translated code about 4.5 billion.
 
-| Record | Go kernel | Kernel program in the machine |
-|---|---|---|
-| The traffic vector, 30 minutes from an empty cell | 0.2 s | 16 s |
-| 2 h at 120 flights an hour | 1.3 s | 8 min |
-| 6 h at 120 flights an hour | 5 s | 34 min |
+| Record | Go kernel | Kernel program, translated code | Kernel program, interpreter |
+|---|---|---|---|
+| The traffic vector, 30 minutes from an empty cell | 0.2 s | 0.4 s | 5.6 s |
+| 2 h at 120 flights an hour | 1.6 s | 7 s | 1.8 min |
+| 6 h at 120 flights an hour | 5 s | 29 s | 7.3 min |
+| 6 h at 240 flights an hour | 11 s | 64 s | not run |
 
-So the machine replays six hours of this traffic about 10 times as fast as the traffic itself, and some hundreds of times as slowly as the Go kernel.
+So translated code replays six hours of this traffic about 750 times as fast as the traffic itself, and dense traffic about 340 times as fast. The interpreter replays the six hours about 50 times as fast as the traffic. Translated code is about 6 times as slow as the Go kernel, and the interpreter about 90 times.
+
+**Where the time went.** The first kernel program took 4.55 billion instructions for the traffic vector, and the interpreter needed 16 seconds for them. Three measurements explain the distance from a native program, and two changes followed.
+
+- *The program did work twice.* A profile by function showed 53% of the instructions in one computation that depends on one tube alone, and 12% in the speed of a leg. The Rust kernel computed both again at every check of a pair. It now computes them once for each tube, as the Go kernel does. That removed 65% of the instructions and changed no answer.
+- *The interpreter.* It spends about 14 processor cycles on one instruction of the program. Translated code spends about 1.
+- *Registers of 32 bits.* The same Rust source, built for a 64-bit processor, executes about 3 times fewer instructions. This remains.
 
 ## 6. What is not done
 
 - **The build is not reproducible by others yet.** The bytes of the program depend on the version of the compiler. Until a second party builds the same bytes from the same source with a pinned toolchain, the hash names a program, and nothing but this repository links the program to its source.
 - **There is one machine.** A second machine by another author, or an existing RISC-V emulator with the three environment calls, would test this one. The machine is tested, and it is not proved.
 - **The second kernel is not independent.** One author wrote the Go kernel and the Rust kernel from one specification. They agree on every record that was tried. Both can share one misreading.
-- **The machine is slow.** Section 5 has the numbers. Two things cost. The machine interprets each instruction. And the registers have 32 bits, so one exact product of two 64-bit values takes many instructions, and so does the integer square root of the sampled Verifier, which works one bit at a time. An instruction set with registers of 64 bits would need several times fewer instructions for the same arithmetic. A machine that translates instructions before it runs them would be faster again, and larger to check. Neither is done, and the kernel program is not tuned. A cell with dense traffic has little margin at the present speed.
+- **Translated code puts the Go compiler between the program and the result.** A party that runs translated code trusts the Go compiler to build it right. The interpreter is the check, and it is about 16 times as slow. A cell could run translated code and let a second process follow with the interpreter and compare machine state digests. Nothing does that yet: the tests compare the two, and `record verify -vm -interpret` lets a party choose the interpreter.
+- **Translated code is large.** The translation of the kernel program is 4.6 MB of Go source in the repository, and it must be written again when the program changes.
+- **Registers of 32 bits.** One exact product of two 64-bit values takes many instructions, and so does the integer square root of the sampled Verifier, which works one bit at a time. An instruction set with registers of 64 bits would need about 3 times fewer instructions for the same source. The kernel program is not tuned beyond the one change of section 5.
 - **No bound on the work of one input.** The machine counts instructions, so a bound can be stated and enforced. None is yet.
 - **A fixed heap.** The program stops with exit code 101 if its 40 MiB are full. Every replica stops at the same input, so they do not diverge, but the cell stops. A cell must refuse traffic before that point.
 - **The simulator uses the Go kernel.** An operational cell would run the program on every replica. The Go kernel is for simulation and for development.

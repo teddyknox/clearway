@@ -235,7 +235,7 @@ The replay depends on the inputs alone, and not on what the record says about th
 
 The last row is the finding that matters most. If the record says *committed* and the replay says *rejected: conflict*, the kernel approved a clearance that the public Verifier refuses.
 
-**Replay with the kernel program.** With `-vm`, the checker also gives the inputs of the record to the kernel program in the machine of [vm.md](vm.md): the header, each input, and a request for the state digest at each checkpoint. It compares each answer of the program with the record, bit for bit, and reports the first difference. This replay does not use the Go kernel of the checker. It uses the bytes that the hash in the result names. So it is the replay that two parties with different computers can both make and compare.
+**Replay with the kernel program.** With `-vm`, the checker also gives the inputs of the record to the kernel program in the machine of [vm.md](vm.md): the header, each input, and a request for the state digest at each checkpoint. It compares each answer of the program with the record, bit for bit, and reports the first difference. The machine runs the program as translated code. With `-interpret` it interprets every instruction, which is the definition of the machine and about 16 times as slow. Both give the same answers and the same count of instructions. This replay does not use the Go kernel of the checker. It uses the bytes that the hash in the result names. So it is the replay that two parties with different computers can both make and compare.
 
 **What the result says.** The tool prints one line for each check, and for a check that did not run it says so. `PASS` means that every check that ran found nothing. Without a trusted key and a witness, that is a statement about the file only.
 
@@ -258,7 +258,7 @@ The last row is the finding that matters most. If the record says *committed* an
 
   The simulator around the kernel still uses floating point: it flies the aircraft and plans the routes. It gives the kernel integers. So one seed gives two runs that differ a little on two processor types, because the inputs differ. In the first of the four runs above, about 16,000 of 2.4 million lines differed between the two types: positions by up to 3 mm, one conflict time by 2 µs, and the checkpoints after the first of them. A record of either run replays on both types.
 - **A kernel by another author.** The replay compares bits, and the specification now defines every bit. The kernel in Rust reproduces the records of the kernel in Go. One author wrote both. A kernel by another author, from the specification alone, has not been tried.
-- **The replay in the machine is slow.** It takes 100 to 400 times as long as the Go kernel: 16 seconds for the traffic vector, and 34 minutes for a record of six hours at 120 flights an hour. That is about 10 times as fast as the traffic itself ([vm.md](vm.md), section 5).
+- **The replay in the machine is slower than the Go kernel.** As translated code it takes about 6 times as long: 29 seconds for a record of six hours at 120 flights an hour. In the interpreter alone it takes 7.3 minutes. Both are far faster than the traffic itself ([vm.md](vm.md), section 5).
 - **One signer, and no witness.** The simulator signs with one key. The checker supports several signers and a quorum, and nothing runs several replicas. Nothing sends a checkpoint to a witness: `record checkpoints` prints the lines that a witness would keep.
 - **The order of writing.** In a replicated kernel the replicas agree on an input before any of them applies it, and a replica that cannot write does not apply. Here one process writes, and a failed write does not stop the kernel.
 - **A record starts from an empty Store.** A cell that has run for years needs a signed snapshot of the state to start a replay from. The format has none.
@@ -278,6 +278,7 @@ go run ./cmd/record checkpoints run.rec > held.ckpt    # what a witness keeps
 go run ./cmd/record verify -key cell.pub -witness held.ckpt run.rec
 go run ./cmd/record verify conformance/kernel-traffic-0.2.rec.gz   # a published vector, not signed
 go run ./cmd/record verify -vm conformance/kernel-traffic-0.2.rec.gz   # also with the kernel program, in the machine
+go run ./cmd/record verify -vm -interpret conformance/kernel-traffic-0.2.rec.gz   # the same, with every instruction interpreted
 ```
 
 A file whose name ends in `.gz` is read as gzip.
