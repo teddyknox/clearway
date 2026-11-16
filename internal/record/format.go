@@ -146,9 +146,17 @@ func (c *Checkpoint) message() []byte {
 	return b.Bytes()
 }
 
-func (c *Checkpoint) sign(key ed25519.PrivateKey) {
+// Sign adds the signature of key to the checkpoint.
+func (c *Checkpoint) Sign(key ed25519.PrivateKey) {
 	pub := key.Public().(ed25519.PublicKey)
 	c.Sigs = append(c.Sigs, Sig{Key: hex.EncodeToString(pub), Sig: hex.EncodeToString(ed25519.Sign(key, c.message()))})
+}
+
+// SignedBy reports whether sig is the signature of the key pub for the
+// checkpoint. The signatures that the checkpoint already carries do not
+// count.
+func (c *Checkpoint) SignedBy(pub ed25519.PublicKey, sig []byte) bool {
+	return len(pub) == ed25519.PublicKeySize && ed25519.Verify(pub, c.message(), sig)
 }
 
 // MarshalLine returns the checkpoint as one line of a record, without the

@@ -29,6 +29,12 @@ go vet ./...
 go test ./...
 ```
 
+The replicated cell is a module of its own, with its own tests. They start CometBFT nodes on the network of this computer and take about two minutes:
+
+```bash
+cd cell && go vet ./... && go test ./...
+```
+
 The Go tests need no Rust toolchain: the built kernel program is in the repository. A change under `guest/` needs one, with the target `riscv32imac-unknown-none-elf`. Build the kernel as a native program, so that `go test ./internal/record` compares it with the Go kernel on long records too:
 
 ```bash
@@ -55,7 +61,7 @@ RVM_WRITE_CODE=1 go test -tags rvmbootstrap ./internal/rvm -run TestTranslations
 
 1. **The kernel stays deterministic and alone.** `internal/kernel` imports only `internal/fx` and `internal/traj`. It uses no random numbers and no clock. `internal/safetynet` imports nothing from this module. The two Verifier implementations do not call each other's geometry. The tests in `internal/arch` enforce this.
    The kernel must compute the same bits on every machine. So `internal/fx`, `internal/traj`, `internal/kernel`, and `guest/kernel` have no floating point: no such type, no such literal, and no use of package `math` ([docs/spec.md](docs/spec.md), section 1). `guest/kernel` also has no unsafe code. `internal/arch` tests these rules too.
-2. **No dependencies.** The module uses the Go standard library only, and `guest/` uses no crate. A change that adds a dependency must say why nothing else will do.
+2. **No dependencies.** The root module uses the Go standard library only, and `guest/` uses no crate. A change that adds a dependency must say why nothing else will do. The one exception is the module `cell/`, which holds the replicated cell and depends on CometBFT. Nothing in the root module imports it, so the kernel, the machine, the record, and the check of a record stay free of dependencies.
 3. **The two kernels move together.** A change to what the kernel does changes `internal/kernel` and `guest/kernel` in one commit, with the kernel program built again, its translated code, and its new hash in `internal/kimage/kimage.go`. `go test ./internal/kimage ./internal/record` then shows that the two give the same bits.
 4. **The interpreter defines the machine.** Translated code is a faster way to the same states, and nothing else. A change to `rvm.Translate` must keep every test that compares translated code with the interpreter, and a new kind of translated instruction needs a slot in the program of `opsProgram`.
 5. **A change to the kernel or to a Verifier carries its evidence.**

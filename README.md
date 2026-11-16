@@ -9,6 +9,7 @@ A clearway is the obstacle-free area beyond the end of a runway, kept clear so t
 - [conformance/](conformance/README.md): 628 test vectors that check a Verifier against the specification, and two recorded vectors that hold the kernel to the same bits on every machine.
 - [docs/record.md](docs/record.md): the record of what a kernel decided, chained by hash and signed, and how a party outside the operator checks it.
 - [docs/vm.md](docs/vm.md): the one program that is the kernel, and the small machine that runs it, so that every party computes the same bits.
+- [docs/replication.md](docs/replication.md): four replicas of the kernel that agree through CometBFT, so that the cell survives a replica that stops and a replica that gives wrong answers.
 - [docs/prototype.md](docs/prototype.md): what the prototype contains, how it is checked, and what the simulations show.
 - [docs/gap-analysis.md](docs/gap-analysis.md): what separates the prototype from a system that could carry traffic.
 - [docs/pitch.md](docs/pitch.md): the pitch we want to be able to make. It is a target, and nothing in it has happened yet.
@@ -18,7 +19,7 @@ The design in one paragraph: each flight has one cleared 4D trajectory, called a
 
 ## Prototype
 
-Go 1.26, standard library only. The kernel computes with integers only. It exists twice: in Go, for the simulator, and in Rust (`guest/`), built as one program for a small RISC-V machine that is also in this repository. The built program is in the repository, so the Go tests need no Rust toolchain.
+Go 1.26. The root module uses the standard library only. The replicated cell is a module of its own, `cell/`, which depends on CometBFT. The kernel computes with integers only. It exists twice: in Go, for the simulator, and in Rust (`guest/`), built as one program for a small RISC-V machine that is also in this repository. The built program is in the repository, so the Go tests need no Rust toolchain.
 
 ```bash
 go test ./...
@@ -58,6 +59,18 @@ Check a published record with the kernel program, in the machine:
 go run ./cmd/record verify -vm conformance/kernel-traffic-0.2.rec.gz
 ```
 
+Replay the record of that run, `run.rec`, on four replicas that agree through CometBFT, and write the record that they sign together:
+
+```bash
+cd cell && go run ./cmd/cell run -record ../run.rec -out ../cell.rec
+```
+
+The tests of the cell are separate:
+
+```bash
+cd cell && go test ./...
+```
+
 Watch a scenario in the browser, at <http://127.0.0.1:8787>:
 
 ```bash
@@ -76,6 +89,7 @@ go run ./cmd/atcviz
 | `cmd/atcviz` | Viewer: replays a scenario on a map, with the kernel's verdicts |
 | `internal/conformance`, `cmd/conform` | The conformance suite for Verifier implementations, and its runner |
 | `internal/record`, `cmd/record` | The record of a kernel: writer, checker with replay, and command |
+| `cell/` | The replicated cell: the kernel program as a CometBFT application, one replica, the client with the certificate of a verdict, and the command. A module of its own |
 
 ## Status
 

@@ -151,6 +151,10 @@ func (tr Track) Valid() bool {
 // leaves room for a horizon below fx.MaxTime.
 const maxClock = fx.MaxTime / 2
 
+// MaxClock is the latest time of the kernel's clock (µs): Advance ignores a
+// later time.
+const MaxClock = maxClock
+
 // Contract is a cleared trajectory with its tube.
 type Contract struct {
 	Tube

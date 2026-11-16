@@ -439,7 +439,7 @@ func TestEveryChangeIsFound(t *testing.T) {
 			i := find(t, ls, 0, cp, 5)
 			c := checkpointOf(t, ls[i])
 			c.Sigs = nil
-			c.sign(keyB)
+			c.Sign(keyB)
 			ls[i] = c.MarshalLine()
 			return ls, -1
 		}, "signature"},
@@ -521,7 +521,7 @@ func resign(t testing.TB, ls [][]byte, key ed25519.PrivateKey) [][]byte {
 		}
 		c := checkpointOf(t, raw)
 		c.Head, c.Sigs = head, nil
-		c.sign(key)
+		c.Sign(key)
 		ls[i] = c.MarshalLine()
 	}
 	return ls
@@ -621,7 +621,7 @@ func TestRewriteBySignerNeedsAWitness(t *testing.T) {
 	forged := held[3]
 	forged.Head[0] ^= 1
 	forged.Sigs = nil
-	forged.sign(keyB)
+	forged.Sign(keyB)
 	withWitness.Witnessed = []Checkpoint{forged}
 	rep = verify(t, first, withWitness)
 	if classes(rep) != "witness" || !strings.Contains(rep.Failures[0].Msg, "trusted signatures") {

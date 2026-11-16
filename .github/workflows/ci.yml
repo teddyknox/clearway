@@ -27,5 +27,10 @@ jobs:
         run: cargo build --release --manifest-path guest/Cargo.toml -p clearway-kernel-host
       - name: Test
         run: go test ./...
+      # The replicated cell is a module of its own: it depends on CometBFT.
+      # Its tests run four replicas on the network of the runner.
+      - name: Replicated cell
+        working-directory: cell
+        run: go vet ./... && go test ./...
       - name: Viewer script
         run: node --check cmd/atcviz/web/app.js

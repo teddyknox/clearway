@@ -28,6 +28,14 @@ var ErrStepLimit = errors.New("rvm: step limit reached")
 // ErrHalted is the error of Step when the guest has halted.
 var ErrHalted = errors.New("rvm: machine has halted")
 
+// ErrNoInput says that the input stream has no byte now and may have more
+// later. An In returns it from Read, with the bytes that it has. Run and Step
+// then return ErrNoInput. The machine is in the state before the read call,
+// and a later call of Run or Step continues: the read call completes when In
+// has delivered all the bytes that the guest asked for, or has ended. So the
+// guest sees the same bytes however the host divides the input in time.
+var ErrNoInput = errors.New("rvm: no input yet")
+
 // A Fault reports an instruction that the machine cannot execute. PC is the
 // address of that instruction. Step is the count of instructions that the
 // machine executed before it. Reason says which rule the instruction broke;
@@ -118,6 +126,7 @@ type Machine struct {
 	reserved bool   // lr.w has set a reservation, and no sc.w has cleared it
 	resAddr  uint32 // the address of the reservation; 0 when none is set
 	eof      bool   // In has reported the end of the input
+	pend     []byte // the bytes of an unfinished read call that In has delivered
 	hostErr  error  // the first error of In or Out; the machine cannot continue
 
 	// cache holds decoded instructions. The instruction at pc is in entry
@@ -151,8 +160,10 @@ func (m *Machine) Halted() (bool, uint32) {
 // nil error. If an instruction faults, Run returns a *Fault; the machine
 // state is the state before that instruction, so a second call returns an
 // equal Fault. If the limit comes first, Run returns ErrStepLimit, and a
-// second call continues from the same state. If In or Out returns an error,
-// Run returns an error that wraps it, and so does every later call.
+// second call continues from the same state. If the guest asks for input and
+// In reports ErrNoInput, Run returns ErrNoInput, and a second call continues
+// from the same state. If In or Out returns another error, Run returns an
+// error that wraps it, and so does every later call.
 func (m *Machine) Run(maxSteps uint64) (exit uint32, err error) {
 	if m.hostErr != nil {
 		return 0, m.hostErr
@@ -252,6 +263,7 @@ func (m *Machine) interpret(limit uint64) error {
 
 		kind       faultKind
 		arg1, arg2 uint32
+		waiting    bool // the guest asked for input that the host does not have yet
 
 		// The span of the translated code, or an empty span. A store into
 		// it makes the code stale.
@@ -592,6 +604,12 @@ loop:
 					}
 					var err error
 					got, err = m.read(mem[uint64(ptr) : uint64(ptr)+uint64(count)])
+					if errors.Is(err, ErrNoInput) {
+						// The call has not happened yet: no byte of memory
+						// and no register has changed.
+						waiting = true
+						break loop
+					}
 					if uint64(ptr) < codeHi && uint64(ptr)+uint64(count) > codeLo {
 						m.code, codeHi = nil, 0
 					}
@@ -639,6 +657,9 @@ loop:
 	if kind != faultNone {
 		return m.newFault(kind, pc, arg1, arg2)
 	}
+	if waiting {
+		return ErrNoInput
+	}
 	return m.hostErr
 }
 
@@ -648,30 +669,40 @@ loop:
 // read fills p unless the input ends first. After the input has ended, read
 // copies nothing and does not call In again. A byte of p that read does not
 // count stays unchanged: read gives In a buffer of its own, because a Reader
-// may write to all of the buffer that it gets. If In returns an error other
-// than the end of the input, read returns that error; the bytes that In
-// delivered before the error are lost.
+// may write to all of the buffer that it gets.
+//
+// If In reports ErrNoInput before p is full, read keeps the bytes that In
+// has delivered, changes nothing in p, and returns ErrNoInput. The next call
+// continues with those bytes: the caller makes it for the same read call of
+// the guest. If In returns any other error than the end of the input, read
+// returns that error; the bytes that In delivered before the error are lost.
 func (m *Machine) read(p []byte) (uint32, error) {
-	if m.In == nil || m.eof {
+	if m.In == nil {
 		return 0, nil
 	}
 	if m.buf == nil {
 		m.buf = make([]byte, 1<<16)
 	}
-	total := 0
-	for total < len(p) {
-		chunk := m.buf[:min(len(m.buf), len(p)-total)]
-		got, err := io.ReadFull(m.In, chunk)
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+	for len(m.pend) < len(p) && !m.eof {
+		chunk := m.buf[:min(len(m.buf), len(p)-len(m.pend))]
+		got, err := m.In.Read(chunk)
+		m.pend = append(m.pend, chunk[:got]...)
+		switch {
+		case err == nil:
+		case err == io.EOF:
 			m.eof = true
-		} else if err != nil {
+		case errors.Is(err, ErrNoInput):
+			// In may deliver the last bytes of the call together with
+			// ErrNoInput. The call is then complete.
+			if len(m.pend) < len(p) {
+				return 0, ErrNoInput
+			}
+		default:
+			m.pend = nil
 			return 0, err
 		}
-		copy(p[total:], chunk[:got])
-		total += got
-		if m.eof {
-			break
-		}
 	}
-	return uint32(total), nil
+	n := copy(p, m.pend)
+	m.pend = m.pend[:0]
+	return uint32(n), nil
 }

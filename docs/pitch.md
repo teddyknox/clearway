@@ -102,7 +102,7 @@ Each row is a claim in the pitch, what must exist for it to be true, and where t
 | Three demotions that worked | Monitors for every assumption, and automatic demotion | Designed, not built |
 | Controllers wrote the supervisor's role | A working relationship with the controllers' union from the first year | No contact |
 | 160 controllers in simulation | A human-in-the-loop simulator, and time at the Technical Center | A viewer |
-| A core site lost with no effect; a year of attack survived | Four replicas, quorum certificates, and an outside red team | One process |
+| A core site lost with no effect; a year of attack survived | Four replicas, quorum certificates, and an outside red team | Four replicas on one computer, with certificates. The cell survives one that is killed and one that lies |
 | Three bidders run on the kernel | Stable public interfaces, a public test bench, and vendors who see a reason | Internal interfaces |
 | A cost estimate and a schedule that auditors reviewed | Someone whose job that is | No estimate |
 | A kernel standard to cite | A standards committee, and years of its time | None |

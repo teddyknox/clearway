@@ -107,11 +107,14 @@
 //
 // # Limits of the host
 //
-// Two events are outside the definition above, because they come from the
+// Three events are outside the definition above, because they come from the
 // host and not from the guest. Run returns ErrStepLimit when the caller's
 // step limit comes before a halt or a fault; the caller can continue the
-// run. If the input or the output stream returns an error, Run returns that
-// error and the machine cannot continue.
+// run. Run returns ErrNoInput when the guest asks for input that the host
+// does not have yet; the read call has then not happened, and the caller can
+// continue the run when it has more input. If the input or the output stream
+// returns another error, Run returns that error and the machine cannot
+// continue.
 //
 // # Speed
 //

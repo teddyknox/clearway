@@ -98,7 +98,7 @@ Six streams run in parallel.
 | Stream | Work | Output |
 |---|---|---|
 | A | Prove the invariants for the geometry at the heart of the Verifier. Support the first outside Verifier team. | Proof in progress. First outside Verifier in progress |
-| B | Run the kernel as four replicas with quorum certificates, on machines in four places. | The replication of design section 9.5, working |
+| B | Run the kernel as four replicas with quorum certificates, on machines in four places. The prototype has the four replicas and the certificates on one computer ([replication.md](replication.md)). | The replication of design section 9.5, working |
 | C | Start the shadow run on live en route data by 2027-11. Run the first airspace check. Review its findings with the controller on the project. | Shadow running. First findings |
 | D | Hold the first workshop on the supervisor's role. Design the workstation for simulation with people in it. | Role draft 0 |
 | E | Start a research agreement with the FAA's Technical Center or with NASA. | Paperwork under way |

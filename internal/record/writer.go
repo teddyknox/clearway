@@ -122,7 +122,7 @@ func (w *Writer) Checkpoint(t int64, state [32]byte) {
 	}
 	c := Checkpoint{Cell: w.cell, Seq: w.seq, T: t, Head: w.head, State: state}
 	for _, k := range w.signers {
-		c.sign(k)
+		c.Sign(k)
 	}
 	w.write(c.MarshalLine())
 	if w.err == nil {

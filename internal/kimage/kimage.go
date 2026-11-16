@@ -25,7 +25,7 @@ var ELF []byte
 
 // SHA256 names the kernel program: the SHA-256 of ELF, in hexadecimal.
 // guest/build.sh prints it. A test holds ELF to it.
-const SHA256 = "67c7ffc63f0f2571fb0335c2510721abefd9d06f21d35ffc82cd936de3f7253b"
+const SHA256 = "000f52918e6d48b14e9b2a09902a53a3af8d5fdcedefb2aa212357f573eeef68"
 
 // Memory is the size of the machine that the program runs in (bytes). The
 // program keeps a heap of 40 MiB; the stack grows down from the top.

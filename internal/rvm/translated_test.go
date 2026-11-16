@@ -5,6 +5,7 @@ package rvm
 import (
 	"bytes"
 	"errors"
+	"io"
 	"math/rand/v2"
 	"testing"
 )
@@ -259,6 +260,76 @@ func TestTranslatedGuest(t *testing.T) {
 			if !errors.Is(errA, ErrStepLimit) {
 				t.Fatalf("seed %d: %v", seed, errA)
 			}
+		}
+	}
+}
+
+// trickle is an input stream that has a few bytes at a time and reports
+// ErrNoInput in between, as a host does that receives its input in parts.
+type trickle struct {
+	data []byte
+	r    *rand.Rand
+	dry  bool
+}
+
+func (s *trickle) Read(p []byte) (int, error) {
+	if s.dry = !s.dry; s.dry {
+		return 0, ErrNoInput
+	}
+	if len(s.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, s.data[:min(len(s.data), 1+s.r.IntN(7))])
+	s.data = s.data[n:]
+	if s.r.IntN(2) == 0 {
+		return n, ErrNoInput // some bytes, and no more for now
+	}
+	return n, nil
+}
+
+// A host that has no input yet stops the machine before the read call, and
+// the machine continues later. The guest must see the same bytes, and the
+// run must take the same count of instructions, as with all the input from
+// the start: with translated code and without.
+func TestNoInputYet(t *testing.T) {
+	g := newGuestWorkload(1)
+	ref, refOut, _ := runGuest(t, g.in)
+	for _, code := range []*Code{nil, guestCode} {
+		m, err := Load(loadGuest(t), guestMem)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.UseCode(code); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		m.In, m.Out = &trickle{data: g.in, r: rand.New(rand.NewPCG(7, 7))}, &out
+		waits := 0
+		for {
+			_, err := m.Run(guestStepLimit)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, ErrNoInput) {
+				t.Fatal(err)
+			}
+			// The read call has not happened: the pc is at the call, and a
+			// run from here that still has no input changes nothing.
+			if waits++; waits%50 == 0 {
+				dry := *m
+				dry.In = &trickle{dry: false}
+				dry.Mem = bytes.Clone(m.Mem)
+				if _, err := dry.Run(guestStepLimit); !errors.Is(err, ErrNoInput) || dry.PC != m.PC || dry.Steps != m.Steps || dry.X != m.X || !bytes.Equal(dry.Mem, m.Mem) {
+					t.Fatalf("a run with no input changed the machine: %v; pc %#x %#x, steps %d %d, x %v, mem %v", err, dry.PC, m.PC, dry.Steps, m.Steps, dry.X == m.X, bytes.Equal(dry.Mem, m.Mem))
+				}
+			}
+		}
+		same(t, "the guest with input in parts", ref, m, nil, nil)
+		if !bytes.Equal(out.Bytes(), refOut) {
+			t.Fatal("the output differs")
+		}
+		if waits < 100 {
+			t.Fatalf("weak test: the machine waited for input %d times", waits)
 		}
 	}
 }

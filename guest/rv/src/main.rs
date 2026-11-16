@@ -44,55 +44,26 @@ fn panic(_: &PanicInfo) -> ! {
     halt(EXIT_PANIC)
 }
 
-const BUFFER: usize = 4096;
+// The program asks the machine for exactly the bytes of the value that it
+// reads, and writes each answer at once. It keeps no buffer. So it never
+// waits for bytes beyond the message in hand, and a host can give it one
+// message at a time and read the answer before it gives the next.
 
-struct In {
-    buf: [u8; BUFFER],
-    pos: usize,
-    len: usize,
-}
+struct In;
 
 impl Input for In {
     fn read(&mut self, out: &mut [u8]) -> bool {
-        for b in out {
-            if self.pos == self.len {
-                // The machine fills the buffer, or gives what is left of the
-                // input. Zero bytes is the end.
-                self.len = ecall(READ, self.buf.as_mut_ptr() as u32, BUFFER as u32) as usize;
-                self.pos = 0;
-                if self.len == 0 {
-                    return false;
-                }
-            }
-            *b = self.buf[self.pos];
-            self.pos += 1;
-        }
-        true
+        // The machine fills all of `out`, or reports the end of the input.
+        out.is_empty() || ecall(READ, out.as_mut_ptr() as u32, out.len() as u32) as usize == out.len()
     }
 }
 
-struct Out {
-    buf: [u8; BUFFER],
-    len: usize,
-}
-
-impl Out {
-    fn flush(&mut self) {
-        if self.len > 0 {
-            ecall(WRITE, self.buf.as_ptr() as u32, self.len as u32);
-            self.len = 0;
-        }
-    }
-}
+struct Out;
 
 impl Output for Out {
     fn write(&mut self, data: &[u8]) {
-        for &b in data {
-            if self.len == BUFFER {
-                self.flush();
-            }
-            self.buf[self.len] = b;
-            self.len += 1;
+        if !data.is_empty() {
+            ecall(WRITE, data.as_ptr() as u32, data.len() as u32);
         }
     }
 }
@@ -100,13 +71,10 @@ impl Output for Out {
 /// The entry point. The machine has set the stack pointer.
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let mut input = In { buf: [0; BUFFER], pos: 0, len: 0 };
-    let mut out = Out { buf: [0; BUFFER], len: 0 };
-    let code = match run(&mut input, &mut out) {
+    let code = match run(&mut In, &mut Out) {
         Ok(()) => 0,
         Err(e) => e as u32,
     };
-    out.flush();
     halt(code)
 }
 

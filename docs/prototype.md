@@ -44,12 +44,14 @@ These are results of a simplified model (section 9). They test the logic of the 
 | `cmd/atcviz` | — | Viewer: runs a scenario, records it, and replays it in a browser (section 10) |
 | `internal/conformance`, `cmd/conform` | — | Test vectors for a Verifier in any language, the rules that judge an answer, and the runner. See [spec.md](spec.md) |
 | `internal/record`, `cmd/record` | — | The record of a kernel: the writer, the checker with its replay, and the command. See [record.md](record.md) |
+| `cell/` | 9.5 | The kernel program on four replicas that agree through CometBFT, the record that they sign together, and the certificate of a verdict. A Go module of its own, because it has a dependency. See [replication.md](replication.md) |
 
 | Modelled | Not modelled |
 |---|---|
 | Invariants I1 to I5 and assumptions A1 to A3 of the design | Surface, terminal airspace, runways, wake |
 | One cell with entry and exit contracts | Several cells, boundary agreements, island mode |
-| A deterministic kernel of integer arithmetic, published as one program for one machine, and a record of it: a hash chain, signed checkpoints, and a replay | Replicas, quorum certificates, witnesses |
+| A deterministic kernel of integer arithmetic, published as one program for one machine, and a record of it: a hash chain, signed checkpoints, and a replay | Witnesses |
+| Four replicas of the kernel program on one computer, which agree on every input and every state. One may stop, and one may give wrong answers. A certificate for each verdict | Replicas at several sites, a real network, inputs that are signed by their source, the Gateway, island mode |
 | Level flight, climbs and descents, speed changes, lateral detours | Holding, weather, wind fields |
 | Data link delay, lost uplinks, lost replies, refusals, one repeat | Voice, speech recognition |
 | Aircraft that leave their route, leave their level, or have no radio | Surveillance faults, spoofing |
@@ -177,6 +179,7 @@ A loss of separation is two aircraft inside the cell closer than 5 nm and closer
 | `internal/conformance` | Both implementations pass the 628 conformance vectors. A Verifier in Python passes them through the line protocol. Sixteen Verifiers with one deliberate defect each all fail. |
 | `TestKernelVectorSession`, `TestKernelVectorTraffic` | The kernel on this machine replays two published records that an arm64 machine wrote, to the last bit of every conflict time and state digest. The same tests pass in an amd64 build. |
 | `internal/kimage` | The kernel program has the hash that the code states. In the machine it reproduces both published records, in the interpreter and as translated code, with the same count of instructions. Its translated code is current, and the machine with it has the state of the interpreter at random stops. |
+| `cell/` (its own module: `cd cell && go test ./...`) | Four replicas with real CometBFT nodes give the verdicts and the state digests of both published records. The cell goes on with three replicas, gives no verdict with two, and goes on again when a killed replica comes back. A replica that reports a wrong state is outvoted and stops. The record of the cell passes `record verify` with the keys of the replicas and a quorum of three. Nine forged certificates fail the check. See [replication.md](replication.md), section 7. |
 | `TestKernelsAgreeOnUnusualInputs` | The two kernels on inputs that no simulated traffic has: aircraft that do not move, a radius that grows faster than the aircraft flies, legs of one microsecond, values at the limits, and proposals that the kernel must refuse. 132 random sessions in the machine, 12 of them in the interpreter alone, and 600 with the native program when it is built. |
 | `TestRustKernelNative` | The kernel in Rust, as a native program, reproduces a scripted session, the traffic record, and any record that the caller names. It runs when that program is built. |
 | `internal/rvm` | The interpreter: each instruction, each fault, the loader, and that a run depends on the program and its input alone ([vm.md](vm.md), section 5). |
