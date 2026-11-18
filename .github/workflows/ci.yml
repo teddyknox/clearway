@@ -33,4 +33,4 @@ jobs:
         working-directory: cell
         run: go vet ./... && go test ./...
       - name: Viewer script
-        run: node --check cmd/atcviz/web/app.js
+        run: node --check internal/viz/web/app.js

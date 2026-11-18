@@ -92,7 +92,7 @@ go run ./cmd/atcviz
 | `internal/planner` | Heuristic planner, Fallback Resolver, and a hostile planner for tests |
 | `internal/sim` | Fast-time simulation of one en route cell |
 | `cmd/atcsim` | Command-line tool and experiment runner |
-| `cmd/atcviz` | Viewer: replays a scenario on a map, with the kernel's verdicts |
+| `internal/viz`, `cmd/atcviz` | Viewer: replays a scenario on a map, with the kernel's verdicts. `atcviz -export DIR` writes it as files for a web host |
 | `internal/conformance`, `cmd/conform` | The conformance suite for Verifier implementations, and its runner |
 | `internal/record`, `cmd/record` | The record of a kernel: writer, checker with replay, and command |
 | `cell/` | The replicated cell: the kernel program as a CometBFT application, one replica, the client with the certificate of a verdict, and the command. A module of its own |

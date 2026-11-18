@@ -799,6 +799,11 @@ function overlay(text) {
 async function run(sc, seed, minutes) {
   setPlaying(false);
   S.scenario = sc;
+  // A copy of the viewer with no simulator behind it holds one recorded run
+  // of each scenario: it cannot run another seed or another duration.
+  if (sc.fixed) { seed = sc.seed; minutes = sc.minutes; }
+  for (const id of ['seed', 'minutes', 'run']) $(id).disabled = Boolean(sc.fixed);
+  $('runForm').title = sc.fixed ? 'This copy holds one recorded run of each scenario. Run cmd/atcviz to change the seed or the duration.' : '';
   for (const b of document.querySelectorAll('.scenario')) b.setAttribute('aria-current', String(b.dataset.id === sc.id));
   $('seed').value = seed; $('minutes').value = minutes;
   const watch = $('watch');
@@ -821,7 +826,7 @@ async function run(sc, seed, minutes) {
   } catch (err) {
     overlay(`The viewer could not run this scenario (${err.message || err}). Check that the server is still running: go run ./cmd/atcviz`);
   } finally {
-    $('run').disabled = false;
+    $('run').disabled = Boolean(sc.fixed);
   }
 }
 

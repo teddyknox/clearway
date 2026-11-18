@@ -1,9 +1,12 @@
-package main
+package viz
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +21,7 @@ func get(t *testing.T, h http.Handler, url string) *httptest.ResponseRecorder {
 }
 
 func TestPageAndCatalogAreServed(t *testing.T) {
-	h := newMux("")
+	h := Handler("")
 	for path, want := range map[string]string{"/": "Clearway cell viewer", "/app.js": "aircraftAt", "/style.css": "--orange"} {
 		w := get(t, h, path)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), want) {
@@ -44,7 +47,7 @@ func TestPageAndCatalogAreServed(t *testing.T) {
 // Every scenario runs through the HTTP interface and yields a recording that
 // the page can replay.
 func TestEveryScenarioRuns(t *testing.T) {
-	h := newMux("")
+	h := Handler("")
 	for _, sc := range scenarios {
 		w := get(t, h, "/api/run?scenario="+sc.ID+"&minutes=10")
 		if w.Code != http.StatusOK {
@@ -166,5 +169,41 @@ func TestScenariosShowTheirPoint(t *testing.T) {
 	r = runScenario(t, "faulty-verifier-pair")
 	if r.rep.LossKernel != 0 || r.rep.Hard == 0 || r.kinds["alarm"] == 0 {
 		t.Errorf("faulty-verifier-pair: kernel losses %d, alarms %d", r.rep.LossKernel, r.rep.Hard)
+	}
+}
+
+// Export writes the page, the list of scenarios, and one run of each
+// scenario. Each run is the answer of the handler for that scenario, and
+// the list marks each scenario as fixed.
+func TestExport(t *testing.T) {
+	dir := t.TempDir()
+	if err := Export(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"index.html", "app.js", "style.css", "vercel.json"} {
+		if b, err := os.ReadFile(filepath.Join(dir, name)); err != nil || len(b) == 0 {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	var list []struct {
+		ID    string `json:"id"`
+		Fixed bool   `json:"fixed"`
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "scenarios.json"))
+	if err != nil || json.Unmarshal(b, &list) != nil || len(list) != len(scenarios) {
+		t.Fatalf("scenarios.json: %v, %d scenarios", err, len(list))
+	}
+	h := Handler("")
+	for _, sc := range list[:4] {
+		if !sc.Fixed {
+			t.Errorf("%s is not marked as fixed", sc.ID)
+		}
+		file, err := os.ReadFile(filepath.Join(dir, "runs", sc.ID+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if served := get(t, h, "/api/run?scenario="+sc.ID).Body.Bytes(); !bytes.Equal(file, served) {
+			t.Errorf("%s: the exported run is not the run that the handler serves", sc.ID)
+		}
 	}
 }

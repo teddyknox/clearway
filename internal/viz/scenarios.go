@@ -1,4 +1,4 @@
-package main
+package viz
 
 import "github.com/teddyknox/clearway/internal/sim"
 
