@@ -61,14 +61,16 @@ func config(home string, s settings) *cfg.Config {
 	c.P2P.PexReactor = false
 	c.RPC.ListenAddress = s.RPC
 	c.RPC.TimeoutBroadcastTxCommit = 20 * time.Second
-	c.Consensus.TimeoutPropose = 600 * time.Millisecond
-	c.Consensus.TimeoutProposeDelta = 200 * time.Millisecond
-	c.Consensus.TimeoutPrevote = 200 * time.Millisecond
-	c.Consensus.TimeoutPrevoteDelta = 100 * time.Millisecond
-	c.Consensus.TimeoutPrecommit = 200 * time.Millisecond
-	c.Consensus.TimeoutPrecommitDelta = 100 * time.Millisecond
+	// A round whose proposer has failed costs these timeouts, so they are
+	// short: a few times what a step takes when four replicas share one disk.
+	c.Consensus.TimeoutPropose = 200 * time.Millisecond
+	c.Consensus.TimeoutProposeDelta = 100 * time.Millisecond
+	c.Consensus.TimeoutPrevote = 100 * time.Millisecond
+	c.Consensus.TimeoutPrevoteDelta = 50 * time.Millisecond
+	c.Consensus.TimeoutPrecommit = 100 * time.Millisecond
+	c.Consensus.TimeoutPrecommitDelta = 50 * time.Millisecond
 	c.Consensus.TimeoutCommit = 5 * time.Millisecond
-	c.Consensus.PeerGossipSleepDuration = 5 * time.Millisecond
+	c.Consensus.PeerGossipSleepDuration = time.Millisecond
 	// A block only when there is a transaction, and then one more, which
 	// carries the application hash of the block before it.
 	c.Consensus.CreateEmptyBlocks = false

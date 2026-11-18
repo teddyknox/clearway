@@ -170,3 +170,17 @@ func TestProcesses(t *testing.T) {
 	}
 	verify(t, said.String(), name, 816)
 }
+
+// cell sim runs a simulation whose every verdict comes from four replicas,
+// and requires the result of the same simulation with no cell.
+func TestSim(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "cell.rec")
+	var out bytes.Buffer
+	if err := run([]string{"sim", "-hours", "0.34", "-planner", "heuristic", "-budget", "10s", "-out", name}, &out); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "equal those of the same run with no cell") || !strings.Contains(out.String(), " 0 over the budget") {
+		t.Fatalf("cell sim says:\n%s", out.String())
+	}
+	t.Logf("\n%s", regexp.MustCompile(`(?m)^check it.*$`).ReplaceAllString(out.String(), "check it   record verify -quorum 3 -key ... cell.rec"))
+}

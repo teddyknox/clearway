@@ -166,15 +166,49 @@ The tests of the two modules are separate:
 cd cell && go test ./...
 ```
 
-**Measurements.** One 2025 laptop, four replicas on one disk.
+**Measurements.** One 2025 laptop. Section 7.1 has the times of one verdict.
 
 | | |
 |---|---|
-| The traffic record through four replicas | 1,800 batches in about 140 blocks, in 22 s. That is about 80 times as fast as the traffic itself |
-| One block | About 0.16 s. A batch that arrives alone waits that long for its verdict |
+| The traffic record through four replicas, replayed | 1,800 batches in about 140 blocks, in 22 s |
 | One durable write on this disk | 4.3 ms |
 
-The kernel is not what takes the time: the kernel program applies the whole traffic record in 0.4 s. A block takes many durable writes on each replica (the log of the consensus, the state of the signer, the block, the state), and the four replicas share one disk. I did not count the writes of one block, so this explanation is likely and not shown. Nothing is tuned.
+### 7.1 The simulation through the cell
+
+`sim.RunThrough` puts a cell before the kernel of a simulation, and `cell sim` is the command for it. The simulator gives every input of its kernel to the cell. At each proposal it waits until the cell has given a verdict with a certificate that passes the check of section 5. Nothing in the simulation acts on a verdict that the cell has not given.
+
+The simulator still holds a kernel of its own, in Go. It reads that kernel: the planner and the Safety Net need the contracts. The cell decides. If the verdict of the cell differs from the verdict of that kernel, or the state of the cell differs at a checkpoint, the run stops with an error.
+
+```bash
+cd cell && go run ./cmd/cell sim -hours 0.5 -out ../cell.rec
+```
+
+| Test | What it shows |
+|---|---|
+| `TestSimulatorThroughTheCell` | 20 minutes of traffic with every verdict from the cell. The report and the record equal those of the same run with no cell, to the last byte. One replica stops in the middle, and the result is the same. The test prints the times and does not fail for a slow verdict. |
+| `TestSimulatorStopsWithTheCell` | Two replicas stop. The simulation stops at the proposal that waits, with an error. It takes no further verdict. |
+| `TestSim` | The command. |
+
+**The time of one verdict.** A verdict with its certificate takes two blocks: the block with the proposal, and the next block, whose header holds the hash of the result. The simulation advances its kernel once each second, so one second is the budget: a verdict inside it changes nothing in the traffic.
+
+30 minutes of traffic at 240 flights an hour with a hostile planner: 2,049 batches and 428 verdicts.
+
+| Four replicas on | One verdict: median | 99% | Longest | The 30 minutes take |
+|---|---|---|---|---|
+| The disk of the laptop | 309 ms | 435 ms | 533 ms | 135 s |
+| A disk in memory | 81 ms | 130 ms | 145 ms | 39 s |
+
+After one replica of four stopped, on the disk of the laptop, the longest verdict of the test run was 706 ms. In one run, while the other tests of the module used the same disk, it was 1,054 ms: over the budget. So with all four replicas the cell has a margin of two on this disk, and with one replica lost it has almost none.
+
+**Where the time of a block goes.** The log of one replica, with a time for each step, shows it.
+
+- *Durable writes.* A replica writes its vote to the disk, and waits for the disk, before it sends the vote: 13 to 20 ms for each of two votes. It then waits about 70 ms for the votes of the others, which do the same on the same disk. With the files in memory a block takes about 30 ms, and on the disk about 155 ms. So about four fifths of a block is the disk, and part of that is four replicas on one disk, which a real cell does not have.
+- *Waits between replicas.* CometBFT looks for something to send to each replica at an interval. At 5 ms a block in memory took 58 ms, and at 1 ms it takes about 30 ms. The cell uses 1 ms.
+- *A failed proposer.* The replicas take turns to propose. When the turn is a failed replica's, the others wait for a timeout before the next takes over. With the first timeouts (600 ms to propose) a verdict took up to 1.2 s after one replica had stopped. The timeouts are now 200 ms to propose and 100 ms for each vote.
+
+The durable writes are what makes a replica safe to start again: it must not sign two different votes for one step. The cell does not skip them.
+
+**What this measurement does not show.** The clock of the simulation does not wait for the cell: a late verdict is counted against the budget, and it does not delay a clearance in the simulated traffic. The replicas are on one computer, so the network adds nothing. Across sites, each of the three steps of a block adds one delay of the network.
 
 ## 8. What the work found in CometBFT
 
@@ -197,7 +231,7 @@ These are facts about CometBFT 1.0.1 that the code works around or the tests rel
 - **One key for two uses.** A replica signs votes and checkpoints with one key. With two keys, the key that signs the record could be kept apart from the consensus software.
 - **The certificate has no format of its own.** It is JSON of CometBFT's types. A Gateway in another language needs a stated format and a second implementation of the check.
 - **The Gateway is not built.** `cell/client` is the check that a Gateway would make. Nothing delivers a clearance.
-- **The simulator does not use the cell.** It runs the Go kernel in its own process and writes a record. The cell replays that record. A simulation that puts each input through the cell, and waits for the verdict, is the next step.
-- **The delay of a block is not tuned.** A verdict in 0.16 s is enough for strategic clearances, which are planned minutes ahead. It was measured on one disk, and not across sites, where the delay of the network adds to each of the three steps of a block.
+- **The simulator keeps a kernel of its own.** It puts each input through the cell and waits for each verdict (section 7.1), and it reads its own Go kernel for the contracts. A simulator that reads them from the cell would need a way to ask the kernel program for its state.
+- **A verdict takes two blocks.** The certificate needs the block after the one with the proposal. A design in which the replicas sign the result in the same block would halve the time. And nothing removes a failed replica from the turns to propose: each of its turns costs a timeout until someone replaces it.
 - **CometBFT is large.** A replica trusts it, and the 67 other modules that `cell/go.mod` lists. A party that checks a record or a certificate trusts less: the record needs the root module alone, and the certificate needs CometBFT's types and signature check.
 - **No island mode.** The design lets an edge node take limited authority when it loses the core sites (section 9.2). A cell without a quorum here only waits.

@@ -158,3 +158,19 @@ func (s *Session) Checkpoint() (Checkpoint, error) {
 	}
 	return Checkpoint{Cell: s.cell, Seq: s.seq, T: s.now, Head: s.head, State: a.digest}, nil
 }
+
+// InputLine returns the line of a record for one input, without the
+// newline: the bytes that a Writer chains for it.
+func InputLine(in kernel.Input) ([]byte, error) {
+	l, err := inputLine(in)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(l)
+}
+
+// VerdictLine returns the line of a record for one verdict, without the
+// newline: the bytes that a Writer chains for it.
+func VerdictLine(v kernel.Verdict) ([]byte, error) {
+	return json.Marshal(verdictOf(v).line())
+}

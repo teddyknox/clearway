@@ -65,6 +65,12 @@ Replay the record of that run, `run.rec`, on four replicas that agree through Co
 cd cell && go run ./cmd/cell run -record ../run.rec -out ../cell.rec
 ```
 
+Run a simulation whose every verdict comes from the four replicas, and compare it with the same run with no cell:
+
+```bash
+cd cell && go run ./cmd/cell sim -hours 0.5
+```
+
 The tests of the cell are separate:
 
 ```bash

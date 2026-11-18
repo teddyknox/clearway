@@ -170,6 +170,7 @@ type world struct {
 	cfg  Config
 	k    *kernel.Kernel
 	rec  *record.Writer // nil unless the run is recorded
+	gate Gate           // nil unless a cell stands before the kernel
 	net  *safetynet.Net
 	env  *planner.Env
 	heur *planner.Heuristic
@@ -218,22 +219,71 @@ var declared = map[string]string{"dual": "dual", "single": "single", "broken-sin
 //
 // RunRecord returns an error if the record is not complete.
 func RunRecord(cfg Config, out io.Writer, signers ...ed25519.PrivateKey) (*Report, error) {
-	w, err := newWorld(cfg)
-	if err != nil {
-		return nil, err
-	}
-	w.rec, err = record.NewWriter(out, record.Header{
+	return RunThrough(cfg, nil, out, signers...)
+}
+
+// RecordHeader returns the header of the record of a run with cfg.
+func RecordHeader(cfg Config) record.Header {
+	return record.Header{
 		Cell:     fmt.Sprintf("sim-%d", cfg.Seed),
 		Verifier: declared[cfg.Verifier],
 		Params:   cfg.Kernel,
 		Note: fmt.Sprintf("Clearway simulator: seed %d, %g s, %g flights per hour, planner %s",
 			cfg.Seed, cfg.Duration, cfg.FlightsPerHour, cfg.Planner),
-	}, signers...)
+	}
+}
+
+// A Gate stands between the simulator and the kernel of a cell. The
+// simulator gives it every input of its kernel, in order, and it gives them
+// to the cell (docs/replication.md).
+//
+// The simulator calls Input before its own kernel applies an input, and
+// Verdict with the verdict of its own kernel. Verdict must not return
+// before the cell has given its verdict for that proposal. So nothing in
+// the simulation acts on a verdict that the cell has not given. Checkpoint
+// states the record of the simulator so far: the Gate compares it with the
+// cell.
+//
+// A Gate that fails returns the failure from Err from then on: the cell
+// gave no verdict in time, or another verdict, or it reached another state.
+// The simulator then stops the run.
+type Gate interface {
+	kernel.Recorder
+	Checkpoint(c record.Checkpoint)
+	Err() error
+}
+
+// both gives the inputs and verdicts of a kernel to two recorders.
+type both struct{ a, b kernel.Recorder }
+
+func (r both) Input(in kernel.Input)    { r.a.Input(in); r.b.Input(in) }
+func (r both) Verdict(v kernel.Verdict) { r.a.Verdict(v); r.b.Verdict(v) }
+
+// RunThrough executes one simulation as RunRecord does, with gate between
+// the simulator and the kernel of a cell. The cell must have the header of
+// RecordHeader(cfg). If gate is nil, RunThrough is RunRecord.
+//
+// RunThrough returns the error of the gate if the gate fails. The report is
+// then the report of the run up to that time.
+func RunThrough(cfg Config, gate Gate, out io.Writer, signers ...ed25519.PrivateKey) (*Report, error) {
+	w, err := newWorld(cfg)
+	if err != nil {
+		return nil, err
+	}
+	w.rec, err = record.NewWriter(out, RecordHeader(cfg), signers...)
 	if err != nil {
 		return nil, err
 	}
 	w.k.Rec = w.rec
+	if gate != nil {
+		w.gate = gate
+		w.k.Rec = both{w.rec, gate}
+	}
 	w.run()
+	if gate != nil && gate.Err() != nil {
+		_ = w.rec.Close()
+		return &w.rep, gate.Err()
+	}
 	if err := w.rec.Close(); err != nil {
 		return nil, fmt.Errorf("the record is not complete: %w", err)
 	}
@@ -737,6 +787,9 @@ func (w *world) run() {
 	steps := int(w.cfg.Duration / dt)
 	var in []*aircraft
 	for s := 1; s <= steps; s++ {
+		if w.gate != nil && w.gate.Err() != nil {
+			break
+		}
 		w.now = float64(s) * dt
 		w.k.Advance(conv.Time(w.now))
 
@@ -842,6 +895,12 @@ func (w *world) run() {
 		}
 		if w.rec != nil && (s%60 == 0 || s == steps) {
 			w.rec.Checkpoint(w.k.Now(), w.k.StateDigest())
+			if w.gate != nil {
+				seq, head := w.rec.Head()
+				w.gate.Checkpoint(record.Checkpoint{
+					Cell: RecordHeader(w.cfg).Cell, Seq: seq, T: w.k.Now(), Head: head, State: w.k.StateDigest(),
+				})
+			}
 		}
 	}
 	for _, ep := range w.conflicts {

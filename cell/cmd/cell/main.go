@@ -5,6 +5,7 @@
 //	cell setup -dir DIR -record FILE         write the files of a cell
 //	cell node  -home DIR [-out FILE]         run one replica until it is interrupted
 //	cell feed  -home DIR -record FILE        give the inputs of a record to a running cell
+//	cell sim   [-hours H] [-out FILE]        a simulation whose every verdict comes from four replicas
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/teddyknox/clearway/cell/client"
 	"github.com/teddyknox/clearway/cell/node"
 	"github.com/teddyknox/clearway/internal/record"
+	"github.com/teddyknox/clearway/internal/sim"
 )
 
 func main() {
@@ -34,7 +37,7 @@ func main() {
 	}
 }
 
-const usage = "usage: cell run|setup|node|feed [flags]; cell COMMAND -h lists the flags"
+const usage = "usage: cell run|setup|node|feed|sim [flags]; cell COMMAND -h lists the flags"
 
 func run(args []string, out io.Writer) error {
 	if len(args) == 0 {
@@ -49,6 +52,8 @@ func run(args []string, out io.Writer) error {
 		return runNode(args[1:], out)
 	case "feed":
 		return feed(args[1:], out)
+	case "sim":
+		return simulate(args[1:], out)
 	}
 	return errors.New(usage)
 }
@@ -203,6 +208,99 @@ func runCell(args []string, out io.Writer) error {
 		}
 	}
 	fmt.Fprintf(out, "replicas   all %d have the last state of the record: line %d, state %x\n", len(rs), last.Seq, last.State)
+	return writeRecord(rs[0], *outName, out)
+}
+
+// simulate runs one simulation with a cell before its kernel, and the same
+// simulation with no cell, and compares the two.
+func simulate(args []string, out io.Writer) error {
+	cfg := sim.DefaultConfig()
+	cfg.Duration, cfg.FlightsPerHour, cfg.Planner = 1800, 240, "chaos"
+	fs := flag.NewFlagSet("cell sim", flag.ContinueOnError)
+	hours := fs.Float64("hours", cfg.Duration/3600, "simulated hours")
+	fs.Uint64Var(&cfg.Seed, "seed", cfg.Seed, "random seed")
+	fs.Float64Var(&cfg.FlightsPerHour, "rate", cfg.FlightsPerHour, "flights per hour")
+	fs.StringVar(&cfg.Planner, "planner", cfg.Planner, "heuristic, chaos, or none")
+	n := fs.Int("replicas", 4, "the number of replicas")
+	budget := fs.Duration("budget", time.Second, "the time that the cell may take for one verdict: one step of the simulation")
+	dir := fs.String("dir", "", "keep the files of the cell in this directory (default: a temporary directory)")
+	outName := fs.String("out", "", "write the record of the cell, with the signatures of the replicas, to this file")
+	limit := fs.Duration("timeout", 2*time.Hour, "give up after this time")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg.Duration = *hours * 3600
+	header, err := record.HeaderLine(sim.RecordHeader(cfg))
+	if err != nil {
+		return err
+	}
+	if *dir == "" {
+		tmp, err := os.MkdirTemp("", "clearway-cell-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmp)
+		*dir = tmp
+	}
+	homes, err := node.Setup(*dir, *n, header, 60_000_000)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *limit)
+	defer cancel()
+	rs := make([]*node.Replica, len(homes))
+	for i, home := range homes {
+		if rs[i], err = node.Start(home, node.Options{}); err != nil {
+			return err
+		}
+		defer rs[i].Stop()
+	}
+	for _, r := range rs {
+		if err := r.Client().Ready(ctx); err != nil {
+			return err
+		}
+	}
+	trust, err := client.TrustFromGenesis(rs[0].GenesisFile())
+	if err != nil {
+		return err
+	}
+	var plain, live bytes.Buffer
+	want, err := sim.RunRecord(cfg, &plain)
+	if err != nil {
+		return err
+	}
+	gate := client.NewGate(ctx, rs[0].Client(), trust, *budget)
+	began := time.Now()
+	got, err := sim.RunThrough(cfg, gate, &live)
+	if err != nil {
+		return err
+	}
+	took := time.Since(began)
+	w := gate.Waits()
+	fmt.Fprintf(out, "cell       %d replicas; a block needs %d of them\n", len(rs), quorum(len(rs)))
+	fmt.Fprintf(out, "simulated  %g s of traffic in %v: %.1f times as fast as the traffic\n", cfg.Duration, took.Round(time.Millisecond), cfg.Duration/took.Seconds())
+	fmt.Fprintf(out, "inputs     %d batches; the simulation waited for %d verdicts, each with a certificate that passed the check\n", w.Batches, w.Verdicts)
+	fmt.Fprintf(out, "one verdict %v (median), %v (99%%), %v (longest); %d over the budget of %v\n",
+		w.Median.Round(time.Millisecond), w.P99.Round(time.Millisecond), w.Max.Round(time.Millisecond), w.Late, *budget)
+	if !reflect.DeepEqual(got, want) || !bytes.Equal(live.Bytes(), plain.Bytes()) {
+		return errors.New("the run through the cell differs from the run with no cell")
+	}
+	fmt.Fprintf(out, "result     the report and the record equal those of the same run with no cell\n")
+	if w.Late > 0 {
+		return fmt.Errorf("%d verdicts took longer than %v", w.Late, *budget)
+	}
+	// A quorum signs every checkpoint that the replicas sign.
+	for signed := false; !signed; {
+		signed = true
+		for _, m := range rs[0].Journal.Checkpoints() {
+			signed = signed && len(m.Sigs) >= quorum(len(rs))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	return writeRecord(rs[0], *outName, out)
 }
 
